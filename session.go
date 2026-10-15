@@ -75,11 +75,15 @@ type snapEl struct {
 	Selector string `json:"selector"`
 }
 
-// snapshotJS lists up to 100 visible interactive elements as JSON with a
-// synthesized CSS selector each. Pure DOM read, no clicks.
+// snapshotJS lists up to 100 visible actionable elements as JSON with a
+// synthesized CSS selector each: links, controls, small or named images
+// (map markers, icons), titled elements, dialog/menu/tooltip roles
+// (popups), then short leaf div/span labels outside controls (marker
+// pins, popup lines). Pure DOM read, no clicks.
 const snapshotJS = `(()=>{function css(e){if(e.id)return '#'+CSS.escape(e.id);const p=[];while(e&&e.nodeType===1&&p.length<6){let s=e.tagName.toLowerCase();const sib=e.parentNode?Array.from(e.parentNode.children).filter(c=>c.tagName===e.tagName):[];if(sib.length>1)s+=':nth-of-type('+(sib.indexOf(e)+1)+')';p.unshift(s);e=e.parentNode}return p.join(' > ')}
 const els=[];const seen=new Set();
-for(const el of document.querySelectorAll('a[href],button,input,select,textarea,[role=button],[role=link],[tabindex]')){if(els.length>=100)break;const r=el.getBoundingClientRect();if(r.width===0&&r.height===0)continue;const choice=el.tagName==='SELECT'?(el.options[el.selectedIndex]?el.options[el.selectedIndex].text:'') :'';const name=(choice||el.innerText||el.value||el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.name||el.tagName).trim().replace(/\s+/g,' ').slice(0,80);const sel=css(el);if(seen.has(sel))continue;seen.add(sel);els.push({ref:els.length,role:(el.getAttribute('role')||el.tagName).toLowerCase(),name:name,selector:sel})}return JSON.stringify(els)})()`
+for(const el of document.querySelectorAll('a[href],button,input,select,textarea,img,[title],[role=button],[role=link],[role=dialog],[role=menu],[role=tooltip],[tabindex]')){if(els.length>=100)break;const r=el.getBoundingClientRect();if(r.width===0&&r.height===0)continue;if(el.tagName==='IMG'&&!el.alt&&!el.title&&!el.getAttribute('aria-label')&&(r.width>64||r.height>64))continue;const choice=el.tagName==='SELECT'?(el.options[el.selectedIndex]?el.options[el.selectedIndex].text:'') :'';const name=(choice||el.innerText||el.value||el.alt||el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('placeholder')||el.name||el.tagName).trim().replace(/\s+/g,' ').slice(0,80);const sel=css(el);if(seen.has(sel))continue;seen.add(sel);els.push({ref:els.length,role:(el.getAttribute('role')||el.tagName).toLowerCase(),name:name,selector:sel})}
+for(const el of document.querySelectorAll('div,span')){if(els.length>=100)break;if(el.children.length>0)continue;const t=(el.innerText||'').trim().replace(/\s+/g,' ');if(!t||t.length>120)continue;if(el.closest('a,button,select,input,textarea,label,[role=button],[role=link],[role=dialog],[role=menu],[role=tooltip]'))continue;const r2=el.getBoundingClientRect();if(r2.width===0&&r2.height===0)continue;const sel2=css(el);if(seen.has(sel2))continue;seen.add(sel2);els.push({ref:els.length,role:el.tagName.toLowerCase(),name:t.slice(0,80),selector:sel2})}return JSON.stringify(els)})()`
 
 func snapshotElements(eval func(string) (string, error)) ([]snapEl, error) {
 	raw, err := eval(snapshotJS)
@@ -303,14 +307,13 @@ func runAct(args []string, o fetchOpts) {
 	defer cancelParent()
 	defer cancelAlloc()
 	defer cancelTask()
-	steps, err := parseDo(strings.Join(args, " "))
+	// act takes exactly one step: parse argv directly (no re-join) so
+	// quoted multi-word selectors keep their grouping. Use ; scripts
+	// with --do for multi-step flows.
+	a, err := parseStep(args, strings.Join(args, " "))
 	if err != nil {
 		fatal(err.Error())
 	}
-	if len(steps) != 1 {
-		fatal("act takes exactly one step (use ; scripts with --do)")
-	}
-	a := steps[0]
 	if a.sel != "" {
 		if _, err := strconv.Atoi(strings.TrimSpace(a.sel)); err == nil {
 			els, err := snapshotElements(eval)

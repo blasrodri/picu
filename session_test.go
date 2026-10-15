@@ -33,6 +33,18 @@ func TestFormatSnapshot(t *testing.T) {
 	if !strings.Contains(out, `[1] select "T10 (4378 paradas, 151 dias, 449.8 km)" — #fterr`) {
 		t.Errorf("select choice missing:\n%s", out)
 	}
+	// Markers and popups ride along as plain entries so map pins are
+	// clickable refs even though they are not controls.
+	out = formatSnapshot("https://x.test/", []snapEl{
+		{Ref: 5, Role: "img", Name: "image", Selector: "#map img.marker"},
+		{Ref: 6, Role: "dialog", Name: "Dra. López · Pediatra · Av. Providencia 1208", Selector: ".popup"},
+		{Ref: 7, Role: "div", Name: "Av. Providencia 1208", Selector: "#map div.pin"},
+	})
+	for _, want := range []string{`[5] img "image" — #map img.marker`, `[6] dialog "Dra. López · Pediatra · Av. Providencia 1208" — .popup`, `[7] div "Av. Providencia 1208" — #map div.pin`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
 }
 
 func TestResolveRef(t *testing.T) {

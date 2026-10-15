@@ -125,6 +125,19 @@ func TestSelectVerb(t *testing.T) {
 	}
 }
 
+func TestParseStepKeepsArgvGrouping(t *testing.T) {
+	// act passes argv straight through: a quoted multi-word selector
+	// must not be re-split (re-joining argv would break it).
+	a, err := parseStep([]string{"click", "#map img"}, "click #map img")
+	if err != nil || a.sel != "#map img" {
+		t.Errorf("argv grouping lost: %+v, %v", a, err)
+	}
+	a, err = parseStep([]string{"type", "#q", "hello world"}, "type #q hello world")
+	if err != nil || a.sel != "#q" || a.arg != "hello world" {
+		t.Errorf("argv type parsed as %+v, %v", a, err)
+	}
+}
+
 func TestDescribeMasksTypedText(t *testing.T) {
 	if got := describe(action{verb: "type", sel: "#q", arg: "s3cret"}); got != `type #q ***` {
 		t.Errorf("type log = %q, want masked", got)

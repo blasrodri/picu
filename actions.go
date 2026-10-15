@@ -35,39 +35,9 @@ func parseDo(s string) ([]action, error) {
 		if len(toks) == 0 {
 			continue
 		}
-		a := action{verb: strings.ToLower(toks[0])}
-		switch a.verb {
-		case "click", "scroll":
-			if len(toks) != 2 {
-				return nil, fmt.Errorf("--do %q needs exactly a selector", part)
-			}
-			a.sel = toks[1]
-		case "type", "select":
-			if len(toks) < 3 {
-				return nil, fmt.Errorf("--do %q needs a selector and text", part)
-			}
-			a.sel = toks[1]
-			a.arg = strings.Join(toks[2:], " ")
-		case "wait":
-			if len(toks) != 2 {
-				return nil, fmt.Errorf("--do %q needs a selector or duration", part)
-			}
-			if _, err := time.ParseDuration(toks[1]); err == nil {
-				a.arg = toks[1]
-			} else {
-				a.sel = toks[1]
-			}
-		case "press":
-			if len(toks) < 2 {
-				return nil, fmt.Errorf("--do %q needs a key", part)
-			}
-			a.arg = strings.Join(toks[1:], " ")
-		case "back":
-			if len(toks) > 1 {
-				return nil, fmt.Errorf("--do %q takes no arguments", part)
-			}
-		default:
-			return nil, fmt.Errorf("--do unknown verb %q (click|type|select|wait|scroll|press|back)", toks[0])
+		a, err := parseStep(toks, part)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, a)
 	}
@@ -75,6 +45,50 @@ func parseDo(s string) ([]action, error) {
 		return nil, fmt.Errorf("--do needs at least one step")
 	}
 	return out, nil
+}
+
+// parseStep builds one action from pre-split tokens. --do splits each ;
+// step with splitQuoted; act passes argv straight through so quoted
+// multi-word selectors survive (re-joining argv would lose the grouping).
+func parseStep(toks []string, raw string) (action, error) {
+	if len(toks) == 0 {
+		return action{}, fmt.Errorf("--do %q is empty", raw)
+	}
+	a := action{verb: strings.ToLower(toks[0])}
+	switch a.verb {
+	case "click", "scroll":
+		if len(toks) != 2 {
+			return action{}, fmt.Errorf("--do %q needs exactly a selector", raw)
+		}
+		a.sel = toks[1]
+	case "type", "select":
+		if len(toks) < 3 {
+			return action{}, fmt.Errorf("--do %q needs a selector and text", raw)
+		}
+		a.sel = toks[1]
+		a.arg = strings.Join(toks[2:], " ")
+	case "wait":
+		if len(toks) != 2 {
+			return action{}, fmt.Errorf("--do %q needs a selector or duration", raw)
+		}
+		if _, err := time.ParseDuration(toks[1]); err == nil {
+			a.arg = toks[1]
+		} else {
+			a.sel = toks[1]
+		}
+	case "press":
+		if len(toks) < 2 {
+			return action{}, fmt.Errorf("--do %q needs a key", raw)
+		}
+		a.arg = strings.Join(toks[1:], " ")
+	case "back":
+		if len(toks) > 1 {
+			return action{}, fmt.Errorf("--do %q takes no arguments", raw)
+		}
+	default:
+		return action{}, fmt.Errorf("--do unknown verb %q (click|type|select|wait|scroll|press|back)", toks[0])
+	}
+	return a, nil
 }
 
 // splitQuoted tokenizes shell-style: quote groups survive spaces.
