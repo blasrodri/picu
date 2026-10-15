@@ -33,6 +33,7 @@ var (
 	asJSON      = flag.Bool("json", false, "output schema-validated JSON")
 	budget      = flag.Int("budget", 8000, "token budget for markdown output")
 	jobs        = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
+	countFlg    = flag.Int("count", 10, "results for picu search (0 keeps all)")
 	cacheTT     = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
 	timeout     = flag.Duration("timeout", 10*time.Second, "fetch timeout")
 )
@@ -90,6 +91,9 @@ func main() {
 			return
 		case "doctor":
 			runDoctor()
+			return
+		case "search":
+			runSearchCmd(flag.Args()[1:])
 			return
 		}
 	}
@@ -636,7 +640,7 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading

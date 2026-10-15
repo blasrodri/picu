@@ -57,6 +57,18 @@ renderer opens the session visibly once for a manual solve
 lightpanda first using the profile session, falling back to chrome on
 a bot challenge — solve once in chrome, read fast in lightpanda.
 
+## search
+
+```bash
+picu search lightpanda browser --count 3
+picu search "site:github.com lightpanda" --json
+```
+
+keyless discovery over DuckDuckGo HTML: titles, direct URLs (redirect
+unwrapped), and snippets as markdown or a JSON array. no results is an
+empty list, never an error. pair it with fetch: search for the link,
+then `picu` the URL.
+
 ## daemon (opt-in speed)
 
 `PICU_DAEMON=1` keeps one headless Chrome alive across runs, so repeat
