@@ -1,0 +1,14 @@
+# built binary
+/web
+
+# Go build cache artifacts
+*.test
+*.out
+
+# macOS
+.DS_Store
+
+# local scratch (never commit session material)
+*.browser/
+*.webdata/
+cookies.txt
