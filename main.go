@@ -29,6 +29,7 @@ var (
 	schemaFile = flag.String("schema", "", "validate output JSON against schema FILE (or 'default'), retry once")
 	asJSON     = flag.Bool("json", false, "output schema-validated JSON")
 	budget     = flag.Int("budget", 8000, "token budget for markdown output")
+	jobs       = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
 	cacheTT    = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
 	timeout    = flag.Duration("timeout", 10*time.Second, "fetch timeout")
 )
@@ -43,7 +44,7 @@ var (
 func main() {
 	os.Args = append([]string{os.Args[0]}, reorderArgs(os.Args[1:])...)
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: picu [flags] example.com/article\n\n  bare domains work: scheme defaults to https, flags may go before or after the URL.\n\n")
+		fmt.Fprintf(os.Stderr, "usage: picu [flags] example.com/article [URL2 …]\n\n  bare domains work: scheme defaults to https, flags may go before or after the URL.\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -52,6 +53,7 @@ func main() {
 		if flag.NArg() == 1 {
 			initial = normalizeURL(flag.Arg(0))
 		} else if flag.NArg() > 1 {
+			fmt.Fprintln(os.Stderr, "--tui takes at most one URL")
 			flag.Usage()
 			os.Exit(2)
 		}
@@ -81,12 +83,16 @@ func main() {
 			return
 		}
 	}
-	if flag.NArg() != 1 {
+	if flag.NArg() < 1 {
 		flag.Usage()
 		os.Exit(2)
 	}
-	url := normalizeURL(flag.Arg(0))
 	opts := currentOpts()
+	if flag.NArg() > 1 {
+		runBatch(flag.Args(), opts)
+		return
+	}
+	url := normalizeURL(flag.Arg(0))
 	md, title, cached, via, err := get(url, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -526,7 +532,7 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading

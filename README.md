@@ -43,6 +43,20 @@ the chrome renderer automatically. if a wall still holds, the chrome
 renderer opens the session visibly once for a manual solve
 (`--no-assist` disables that).
 
+## batch
+
+```bash
+./picu example.com example.org --cache 0 --budget 100
+./picu example.com example.org --json --cache 0 --budget 100
+```
+
+multiple URLs fetch in parallel (`--jobs N`, default 4) and always
+print in input order. `--budget`/`--schema` apply per document.
+markdown prints each doc under its header with failures on stderr;
+`--json` emits one array with failures as `{"url":…, "error":…}`.
+exit status is nonzero when any item failed. `--tui` takes at most
+one URL. tip: use `--jobs 1` if a host rate-limits shared-IP bursts.
+
 ## flags
 
 `--select CSS` scopes extraction (JS renderers), `--schema FILE` (or
