@@ -40,6 +40,48 @@ func TestParseDDGEmpty(t *testing.T) {
 	}
 }
 
+const googlePage = `<html><body>
+<div><a href="/url?q=https://lightpanda.io/&amp;sa=U&amp;ved=1"><h3>Lightpanda | The headless browser</h3></a>
+<div><span>Fast browser for machines.</span></div></div>
+<div><a href="https://github.com/lightpanda-io/browser"><h3>repo</h3></a></div>
+<div><a href="/preferences?hl=en">Preferences</a></div>
+<div><a href="https://consent.google.com/ml?continue=x">consent</a></div>
+</body></html>`
+
+func TestParseGoogle(t *testing.T) {
+	got := parseGoogle(googlePage)
+	if len(got) != 2 {
+		t.Fatalf("parseGoogle found %d results, want 2: %+v", len(got), got)
+	}
+	if got[0].Title != "Lightpanda | The headless browser" || got[0].URL != "https://lightpanda.io/" {
+		t.Errorf("first = %+v", got[0])
+	}
+	if got[1].URL != "https://github.com/lightpanda-io/browser" {
+		t.Errorf("direct href mishandled: %+v", got[1])
+	}
+}
+
+func TestGoogleConsent(t *testing.T) {
+	walled := `<html><body><h1>Antes de continuar para a Pesquisa Google</h1><a href="https://consent.google.com/ml?x=1">x</a></body></html>`
+	if !isGoogleConsent(walled) {
+		t.Error("Portuguese consent page not detected")
+	}
+	if isGoogleConsent(`<html><body><a href="/url?q=https://x.test/&sa=U">T</a></body></html>`) {
+		t.Error("results page flagged as consent wall")
+	}
+}
+
+func TestCheckEngine(t *testing.T) {
+	if err := checkEngine("bing"); err == nil {
+		t.Error("unknown engine should error")
+	}
+	for _, ok := range []string{"ddg", "google"} {
+		if err := checkEngine(ok); err != nil {
+			t.Errorf("engine %q should pass: %v", ok, err)
+		}
+	}
+}
+
 func TestFormatSearch(t *testing.T) {
 	md := formatSearch("q", []searchResult{{Title: "T", URL: "https://x.test/", Snippet: "S"}})
 	for _, want := range []string{`## 1 result for "q"`, "- [T](https://x.test/)", "  S"} {

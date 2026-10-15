@@ -69,6 +69,13 @@ unwrapped), and snippets as markdown or a JSON array. no results is an
 empty list, never an error. pair it with fetch: search for the link,
 then `picu` the URL.
 
+`--engine google` renders Google in headless Chrome behind the same
+output contract instead. Google consent-walls unknown sessions, so it
+needs an accepted session (`--profile` with a prior login or
+`--use-real-profile` with Chrome quit); a wall returns an explicit
+error, never wall text as results. accepted-state parsing is the live
+check still open: run it once with your own session and compare.
+
 ## daemon (opt-in speed)
 
 `PICU_DAEMON=1` keeps one headless Chrome alive across runs, so repeat

@@ -34,6 +34,7 @@ var (
 	budget      = flag.Int("budget", 8000, "token budget for markdown output")
 	jobs        = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
 	countFlg    = flag.Int("count", 10, "results for picu search (0 keeps all)")
+	engineFlg   = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
 	cacheTT     = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
 	timeout     = flag.Duration("timeout", 10*time.Second, "fetch timeout")
 )
@@ -328,7 +329,7 @@ func renderViaChrome(url string, o fetchOpts) (md, title string, cached bool, vi
 			return b, t, true, "chrome", nil
 		}
 	}
-	html, err := chromeFetchHTML(url, o.profile, 3*o.timeout, o)
+	html, err := chromeHTML(url, o)
 	if err != nil {
 		return "", "", false, "", err
 	}
@@ -343,6 +344,27 @@ func renderViaChrome(url string, o fetchOpts) (md, title string, cached bool, vi
 	return md, title, false, "chrome", nil
 }
 
+// chromeHTML renders with headless Chrome on the profile snapshot, or on
+// a borrow of the everyday profile under --use-real-profile.
+func chromeHTML(url string, o fetchOpts) (string, error) {
+	if *useReal {
+		realDir, ok := realUserDataDir()
+		if !ok {
+			return "", fmt.Errorf("no everyday Chrome profile found (set PICU_CHROME_PROFILE to point at one)")
+		}
+		if chromeRunning() {
+			return "", fmt.Errorf("Chrome is running and owns its profile — quit Chrome completely, then rerun")
+		}
+		tmp, cleanup, err := borrowForFetch(realDir)
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+		return renderHeadless(url, "", tmp, 3*o.timeout, o, false)
+	}
+	return chromeFetchHTML(url, o.profile, 3*o.timeout, o)
+}
+
 // renderViaBorrowed renders with headless Chrome on a temp copy of the
 // everyday browser profile, so pages load with the user's real sessions
 // (including OAuth) and no per-site login. The original profile is never
@@ -354,19 +376,7 @@ func renderViaBorrowed(url string, o fetchOpts) (md, title string, cached bool, 
 			return b, t, true, v, nil
 		}
 	}
-	realDir, ok := realUserDataDir()
-	if !ok {
-		return "", "", false, "", fmt.Errorf("no everyday Chrome profile found (set PICU_CHROME_PROFILE to point at one)")
-	}
-	if chromeRunning() {
-		return "", "", false, "", fmt.Errorf("Chrome is running and owns its profile — quit Chrome completely, then rerun")
-	}
-	tmp, cleanup, err := borrowForFetch(realDir)
-	if err != nil {
-		return "", "", false, "", err
-	}
-	defer cleanup()
-	html, err := renderHeadless(url, "", tmp, 3*o.timeout, o, false)
+	html, err := chromeHTML(url, o)
 	if err != nil {
 		return "", "", false, "", err
 	}
@@ -640,7 +650,7 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading
