@@ -92,6 +92,22 @@ unusual-traffic rate limit, which needs a human CAPTCHA solve or simply
 waiting it out — the error says which. accepted-state parsing is the
 live check still open: run it once the limit lifts and compare.
 
+## agent loop (persistent session)
+
+```bash
+picu open --profile g example.com/form        # snapshot with [ref]s
+picu snap --session default                   # re-snapshot the live tab
+picu act --session default type 0 hello       # one step: click|type|wait|scroll|press|back
+picu close --session default                  # close tab, drop session
+```
+
+`open` keeps one tab alive on the profile daemon and prints the same
+ref snapshot every command; `snap`/`act` reattach to it, so page state
+(cookies, inputs, navigation) survives between invocations and the
+agent — not picu — is the loop brain. detach-on-cancel leaves the tab
+open; `close` is the only command that kills it. each command is its
+own process with JSON-friendly stdout and exit 0/1/2.
+
 ## daemon (opt-in speed)
 
 `PICU_DAEMON=1` keeps one headless Chrome alive across runs, so repeat
