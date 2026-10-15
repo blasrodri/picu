@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -73,6 +74,11 @@ func loadProfile(name string) (*profile, error) {
 	}
 	return &p, nil
 }
+
+// jarMu serializes profile read-modify-write cycles. Batch workers share
+// one browser and merge refreshed cookies concurrently; without it, saves
+// silently lose each other's cookies.
+var jarMu sync.Mutex
 
 func saveProfile(p *profile) error {
 	path, err := profilePath(p.Name)

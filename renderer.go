@@ -74,8 +74,10 @@ func lightpandaFetchHTML(url string, maxBytes int, timeout time.Duration, o fetc
 		if b, err := os.ReadFile(jar); err == nil && len(bytes.TrimSpace(b)) > 0 {
 			if fresh, err := parseCDPCookies(b); err == nil && len(fresh) > 0 {
 				if p, err := loadProfile(profName); err == nil {
+					jarMu.Lock()
 					p.merge(fresh)
 					_ = saveProfile(p)
+					jarMu.Unlock()
 				}
 			}
 		}

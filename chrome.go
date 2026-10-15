@@ -208,20 +208,96 @@ func injectJar(ctx context.Context, profileName, pageURL string) error {
 	return err
 }
 
-func renderHeadless(url, profileName, userDir string, overall time.Duration, o fetchOpts) (string, error) {
+// sharedChrome is one headless browser reused by every render in this
+// process that targets the same user-data-dir. Separate CDP targets keep
+// pages isolated while sharing removes the per-fetch spawn and, more
+// importantly, the SingletonLock clash that aborted parallel renders
+// sharing one profile directory.
+type sharedChrome struct {
+	cmd   *exec.Cmd
+	wsURL string
+	refs  int
+}
+
+var chromePool = struct {
+	sync.Mutex
+	m map[string]*sharedChrome
+}{m: map[string]*sharedChrome{}}
+
+func startSharedChrome(userDir string) (*sharedChrome, error) {
 	cmd, port, err := launchChrome(true, userDir)
+	if err != nil {
+		return nil, err
+	}
+	wsURL, err := debuggerURL(port)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		return nil, err
+	}
+	return &sharedChrome{cmd: cmd, wsURL: wsURL}, nil
+}
+
+func acquireChromeWith(userDir string, launch func(string) (*sharedChrome, error)) (*sharedChrome, error) {
+	chromePool.Lock()
+	defer chromePool.Unlock()
+	if s, ok := chromePool.m[userDir]; ok {
+		s.refs++
+		return s, nil
+	}
+	s, err := launch(userDir)
+	if err != nil {
+		return nil, err
+	}
+	s.refs = 1
+	chromePool.m[userDir] = s
+	return s, nil
+}
+
+func acquireChrome(userDir string) (*sharedChrome, error) {
+	return acquireChromeWith(userDir, startSharedChrome)
+}
+
+func killQuiet(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+}
+
+func (s *sharedChrome) release(userDir string) {
+	chromePool.Lock()
+	defer chromePool.Unlock()
+	if cur, ok := chromePool.m[userDir]; !ok || cur != s {
+		return
+	}
+	s.refs--
+	if s.refs <= 0 {
+		delete(chromePool.m, userDir)
+		killQuiet(s.cmd)
+	}
+}
+
+// evictChrome kills the shared browser for userDir. The interactive
+// assist needs the profile exclusively; renders in flight fail fast.
+func evictChrome(userDir string) {
+	chromePool.Lock()
+	defer chromePool.Unlock()
+	if s, ok := chromePool.m[userDir]; ok {
+		delete(chromePool.m, userDir)
+		killQuiet(s.cmd)
+	}
+}
+
+func renderHeadless(url, profileName, userDir string, overall time.Duration, o fetchOpts) (string, error) {
+	s, err := acquireChrome(userDir)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = cmd.Process.Kill() }()
+	defer s.release(userDir)
 
 	ctx, cancel := context.WithTimeout(context.Background(), overall)
 	defer cancel()
-	wsURL, err := debuggerURL(port)
-	if err != nil {
-		return "", err
-	}
-	allocCtx, cancelAlloc := remote.NewAllocator(ctx, wsURL)
+	allocCtx, cancelAlloc := remote.NewAllocator(ctx, s.wsURL)
 	defer cancelAlloc()
 	taskCtx, cancelTask := chromedp.NewContext(allocCtx)
 	defer cancelTask()
@@ -336,6 +412,8 @@ func refreshJar(ctx context.Context, profileName string) {
 	if err != nil {
 		return // render ran on session files alone; nothing to refresh
 	}
+	jarMu.Lock()
+	defer jarMu.Unlock()
 	p.merge(fresh)
 	if err := saveProfile(p); err != nil {
 		fmt.Fprintf(os.Stderr, "note: cookie refresh: %v\n", err)
@@ -379,6 +457,7 @@ func chromeFetchHTML(url, profile string, timeout time.Duration, o fetchOpts) (s
 	if !isBotStuck(err) || *noAssist || !isTerminal() {
 		return "", err
 	}
+	evictChrome(wd)
 	if err := assistedSolve(url, profile); err != nil {
 		return "", err
 	}
@@ -447,7 +526,9 @@ func waitDebugger(port int, max time.Duration) (string, error) {
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("timeout")
 		}
-		time.Sleep(300 * time.Millisecond)
+		// Tight poll: endpoint detection lag sits on every browser
+		// launch, so shave it to ~50ms instead of ~300ms.
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

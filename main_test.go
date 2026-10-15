@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -463,6 +464,38 @@ func TestDocFromHTML(t *testing.T) {
 	if _, _, err := docFromHTML("<html><body>Performing security verification Ray ID: 1</body></html>"); err == nil {
 		t.Error("challenge page should error, not serve")
 	}
+}
+
+func TestChromePoolShares(t *testing.T) {
+	launches := 0
+	launch := func(dir string) (*sharedChrome, error) {
+		launches++
+		return &sharedChrome{cmd: exec.Command("true")}, nil
+	}
+	dir := t.TempDir() + "/wd"
+	a, err := acquireChromeWith(dir, launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := acquireChromeWith(dir, launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b {
+		t.Fatal("second acquire should share the browser")
+	}
+	if launches != 1 {
+		t.Errorf("launches = %d, want 1", launches)
+	}
+	a.release(dir)
+	if _, ok := chromePool.m[dir]; !ok {
+		t.Error("releasing one ref should keep the browser")
+	}
+	b.release(dir)
+	if _, ok := chromePool.m[dir]; ok {
+		t.Error("last release should remove the browser")
+	}
+	evictChrome(dir)
 }
 
 func TestCopySessionTree(t *testing.T) {
