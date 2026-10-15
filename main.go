@@ -35,6 +35,7 @@ var (
 	jobs        = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
 	countFlg    = flag.Int("count", 10, "results for picu search (0 keeps all)")
 	engineFlg   = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
+	doFlg       = flag.String("do", "", "browser actions: click|type|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
 	cacheTT     = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
 	timeout     = flag.Duration("timeout", 10*time.Second, "fetch timeout")
 )
@@ -182,6 +183,9 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 	}
 	if *useReal && (want == "static" || want == "lightpanda") {
 		return "", "", false, "", fmt.Errorf("--use-real-profile borrows the Chrome session, so it needs --renderer chrome (or auto)")
+	}
+	if o.do != "" && want != "chrome" {
+		return "", "", false, "", fmt.Errorf("--do runs scripted browser actions, so it needs --renderer chrome")
 	}
 	if want == "lightpanda" {
 		return renderViaLightpanda(url, o)
@@ -650,20 +654,20 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading
 // globals. Login/TUI chrome flags stay on the flag set directly.
 type fetchOpts struct {
-	renderer, profile, selector, extract string
-	budget                               int
-	cacheTTL, timeout, settle            time.Duration
+	renderer, profile, selector, extract, do string
+	budget                                   int
+	cacheTTL, timeout, settle                time.Duration
 }
 
 func currentOpts() fetchOpts {
 	return fetchOpts{
-		renderer: *renderer, profile: *profileFlg, selector: *selectFlg, extract: *extractFlg,
+		renderer: *renderer, profile: *profileFlg, selector: *selectFlg, extract: *extractFlg, do: *doFlg,
 		budget: *budget, cacheTTL: *cacheTT, timeout: *timeout, settle: *settle,
 	}
 }

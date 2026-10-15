@@ -69,6 +69,20 @@ unwrapped), and snippets as markdown or a JSON array. no results is an
 empty list, never an error. pair it with fetch: search for the link,
 then `picu` the URL.
 
+## interact
+
+```bash
+picu --profile g --renderer chrome --do "type #q hello; click #go; wait .results" example.com
+```
+
+`--do` runs scripted steps in one Chrome session before the dump:
+`click`, `type`, `wait` (selector or duration), `scroll` (selector, top,
+bottom), `press` (Enter, Escape, Tab…), `back`. steps split on `;`, the
+first token after the verb is always the selector (quote it with
+spaces), each step logs to stderr, and a selector matching nothing
+fails the run. combine with `--profile` or `--use-real-profile` for
+login-then-act flows, and `--extract` for the resulting document.
+
 `--engine google` renders Google in headless Chrome behind the same
 output contract instead. Google consent-walls unknown sessions, so it
 needs an accepted session (`--profile` with a prior login or

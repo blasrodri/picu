@@ -368,6 +368,18 @@ func renderHeadless(url, profileName, userDir string, overall time.Duration, o f
 	if err := waitChallengeGone(taskCtx, minDuration(45*time.Second, overall/4)); err != nil {
 		return "", err
 	}
+	// Scripted interaction runs after the page (and any wall) settles,
+	// before the stream wait reads the resulting document.
+	if o.do != "" {
+		steps, err := parseDo(o.do)
+		if err != nil {
+			return "", err
+		}
+		eval := func(expr string) (string, error) { return evalString(taskCtx, expr) }
+		if err := runActions(eval, steps); err != nil {
+			return "", err
+		}
+	}
 	// AI answers stream in after load: wait for the text to stop growing.
 	// Deltas go to stderr (progress); the final document owns stdout.
 	// A --select scope skips the wait: the element is either there or not.
