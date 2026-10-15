@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -225,6 +226,11 @@ func renderHeadless(url, profileName, userDir string, overall time.Duration, o f
 	taskCtx, cancelTask := chromedp.NewContext(allocCtx)
 	defer cancelTask()
 
+	tracker := newFlightTracker()
+	if _, err := chromedp.Call(taskCtx, network.Enable, network.EnableParams{}); err == nil {
+		go feedFlights(taskCtx, tracker)
+	}
+
 	if err := injectJar(taskCtx, profileName, url); err != nil {
 		fmt.Fprintf(os.Stderr, "note: cookie injection: %v\n", err)
 	}
@@ -251,7 +257,7 @@ func renderHeadless(url, profileName, userDir string, overall time.Duration, o f
 			s, err := evalString(taskCtx, "document.body ? document.body.innerText : ''")
 			return s, err == nil
 		}
-		waitTextStable(taskCtx, sample, 45*time.Second, o.settle, func(delta string) {
+		waitTextStable(taskCtx, sample, tracker.active, 45*time.Second, o.settle, func(delta string) {
 			fmt.Fprint(os.Stderr, delta)
 		})
 		fmt.Fprintf(os.Stderr, "timings: navigate+ready %s challenge-wait %s stream-settle %s\n",
@@ -534,14 +540,73 @@ func streamDelta(prev, text string) (string, bool) {
 	return text[len(prev):], true
 }
 
+// flightTracker counts unfinished network requests. Research phases and
+// streamed answers keep requests in flight while the text looks still;
+// background beacons do too, so flights only ever shorten the wait (a
+// quiet page settles fast) and never extend it past --settle.
+type flightTracker struct {
+	mu sync.Mutex
+	in map[string]bool
+}
+
+func newFlightTracker() *flightTracker {
+	return &flightTracker{in: map[string]bool{}}
+}
+
+func (t *flightTracker) sent(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.in[id] = true
+}
+
+func (t *flightTracker) done(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.in, id)
+}
+
+func (t *flightTracker) active() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.in)
+}
+
+// feedFlights streams CDP network events into the tracker until ctx ends.
+func feedFlights(ctx context.Context, t *flightTracker) {
+	go func() {
+		for ev, err := range chromedp.Events(ctx, network.RequestWillBeSent) {
+			if err != nil {
+				return
+			}
+			t.sent(string(ev.RequestID))
+		}
+	}()
+	go func() {
+		for ev, err := range chromedp.Events(ctx, network.LoadingFinished) {
+			if err != nil {
+				return
+			}
+			t.done(string(ev.RequestID))
+		}
+	}()
+	go func() {
+		for ev, err := range chromedp.Events(ctx, network.LoadingFailed) {
+			if err != nil {
+				return
+			}
+			t.done(string(ev.RequestID))
+		}
+	}()
+}
+
 // waitTextStable waits until the visible text stops growing (streamed
 // answers) or gives up and lets the caller dump whatever exists.
-// --settle controls how long growing text must hold still (default 6s).
-// Text already still needs only two one-second confirmations, so static
-// pages return in ~2s instead of paying the full streaming tail.
-// onDelta receives each newly streamed suffix so callers can show progress
-// (stderr) while the final document still goes to stdout intact.
-func waitTextStable(ctx context.Context, sample func() (string, bool), max, settle time.Duration, onDelta func(string)) {
+// --settle bounds the wait (default 6s) for text that keeps moving. Text
+// still with a quiet network returns after one 500ms stillness check, so
+// static pages settle in under a second; anything in flight holds the
+// full tail. onDelta receives each newly streamed suffix so callers can
+// show progress (stderr) while the final document goes to stdout intact.
+func waitTextStable(ctx context.Context, sample func() (string, bool), flights func() int, max, settle time.Duration, onDelta func(string)) {
 	deadline := time.Now().Add(max)
 	sleep := func(d time.Duration) bool {
 		select {
@@ -551,7 +616,6 @@ func waitTextStable(ctx context.Context, sample func() (string, bool), max, sett
 			return !time.Now().After(deadline)
 		}
 	}
-	seed, seeded := "", false
 	emit := func(prev, text string) {
 		if onDelta == nil {
 			return
@@ -560,62 +624,43 @@ func waitTextStable(ctx context.Context, sample func() (string, bool), max, sett
 			onDelta(delta)
 		}
 	}
-	if a, ok := sample(); ok && a != "" {
-		if sleep(time.Second) {
-			if b, ok := sample(); ok {
-				if b == a {
-					if sleep(time.Second) {
-						if c, ok := sample(); ok && c == b {
-							return
-						}
-					}
-				} else {
-					emit(a, b)
-				}
-				seed, seeded = b, true
-			}
-		}
-	}
-	need := int(settle.Seconds() / 2)
-	if need < 1 {
-		need = 1
-	}
-	if need > 5 {
-		need = 5
-	}
-	var last []int
-	prev, first := seed, !seeded
+	// Mount: empty text polls fast until content appears. Pages that
+	// stay empty ride out the deadline; cutting them off early would
+	// break slow-mounting SPAs.
+	prev := ""
 	for {
-		text, n := "", -1
-		if s, ok := sample(); ok {
-			text, n = s, len(s)
+		if t, ok := sample(); ok && t != "" {
+			prev = t
+			break
 		}
-		last = append(last, n)
-		if len(last) > need {
-			last = last[1:]
-		}
-		if !first && onDelta != nil {
-			if delta, ok := streamDelta(prev, text); ok {
-				onDelta(delta)
-			}
-		}
-		first, prev = false, text
-		stable := len(last) == need && n > 0
-		for _, v := range last {
-			if v != n {
-				stable = false
-			}
-		}
-		if stable {
+		if !sleep(250 * time.Millisecond) {
 			return
 		}
-		if time.Now().After(deadline) {
+	}
+	changed := time.Now()
+	prevLen := -1
+	for {
+		if !sleep(250 * time.Millisecond) {
 			return
 		}
-		select {
-		case <-ctx.Done():
+		cur, ok := sample()
+		if !ok || cur == "" {
+			changed = time.Now()
+			continue
+		}
+		if len(cur) != prevLen {
+			emit(prev, cur)
+			prev, prevLen = cur, len(cur)
+			changed = time.Now()
+			continue
+		}
+		prev = cur
+		required := settle
+		if flights() == 0 {
+			required = 500 * time.Millisecond
+		}
+		if time.Since(changed) >= required {
 			return
-		case <-time.After(2 * time.Second):
 		}
 	}
 }

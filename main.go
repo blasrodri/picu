@@ -25,7 +25,7 @@ var (
 	useReal     = flag.Bool("use-real-profile", false, "fetch with your everyday Chrome profile: pages load with your real sessions, no per-site login (quit Chrome first)")
 	loginWait   = flag.Duration("login-timeout", 15*time.Second, "how long to wait for the login browser endpoint")
 	noAssist    = flag.Bool("no-assist", false, "never open a visible browser to solve bot walls")
-	settle      = flag.Duration("settle", 6*time.Second, "how long growing text must hold still (still text returns after ~2s)")
+	settle      = flag.Duration("settle", 6*time.Second, "how long growing text must hold still (still text returns in under a second)")
 	selectFlg   = flag.String("select", "", "CSS selector: extract only the first matching element (needs JS renderer)")
 	extractFlg  = flag.String("extract", "", "extract subset: article|metadata (applies before budget)")
 	schemaFile  = flag.String("schema", "", "validate output JSON against schema FILE (or 'default'), retry once")

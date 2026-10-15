@@ -284,14 +284,75 @@ func TestStreamDelta(t *testing.T) {
 	}
 }
 
+func scripted(paths []string) func() (string, bool) {
+	i := 0
+	return func() (string, bool) {
+		s := paths[i]
+		if i < len(paths)-1 {
+			i++
+		}
+		return s, true
+	}
+}
+
 func TestWaitTextStableFastPath(t *testing.T) {
 	calls := 0
 	sample := func() (string, bool) { calls++; return "hello world", true }
 	start := time.Now()
-	waitTextStable(context.Background(), sample, 30*time.Second, 6*time.Second, nil)
+	waitTextStable(context.Background(), sample, func() int { return 0 }, 30*time.Second, 6*time.Second, nil)
 	el := time.Since(start)
-	if el < 2*time.Second || el > 8*time.Second {
-		t.Errorf("static page should settle in ~2s, took %s (%d samples)", el, calls)
+	if el < 300*time.Millisecond || el > 4*time.Second {
+		t.Errorf("quiet static page should settle in ~0.5s, took %s (%d samples)", el, calls)
+	}
+}
+
+func TestWaitTextStableMount(t *testing.T) {
+	start := time.Now()
+	waitTextStable(context.Background(), scripted([]string{"", "", "ready text", "ready text", "ready text"}), func() int { return 0 }, 30*time.Second, 6*time.Second, nil)
+	if el := time.Since(start); el > 6*time.Second {
+		t.Errorf("mounting page took %s", el)
+	}
+}
+
+func TestWaitTextStableFlightsGate(t *testing.T) {
+	calls := 0
+	flights := func() int {
+		calls++
+		if calls < 7 {
+			return 1
+		}
+		return 0
+	}
+	start := time.Now()
+	waitTextStable(context.Background(), scripted([]string{"x"}), flights, 30*time.Second, 2*time.Second, nil)
+	if el := time.Since(start); el < 1500*time.Millisecond || el > 6*time.Second {
+		t.Errorf("in-flight network should hold the full tail, took %s", el)
+	}
+}
+
+func TestWaitTextStableTicking(t *testing.T) {
+	ticks := []string{"7:20 PM x", "7:21 PM x", "7:22 PM x", "7:23 PM x", "7:24 PM x"}
+	start := time.Now()
+	waitTextStable(context.Background(), scripted(ticks), func() int { return 0 }, 5*time.Second, 6*time.Second, nil)
+	if el := time.Since(start); el > 3*time.Second {
+		t.Errorf("same-length ticking text should settle like still text, took %s", el)
+	}
+}
+
+func TestFlightTracker(t *testing.T) {
+	tr := newFlightTracker()
+	tr.sent("a")
+	tr.sent("b")
+	if n := tr.active(); n != 2 {
+		t.Errorf("active = %d, want 2", n)
+	}
+	tr.done("a")
+	if n := tr.active(); n != 1 {
+		t.Errorf("active = %d, want 1", n)
+	}
+	tr.done("b")
+	if n := tr.active(); n != 0 {
+		t.Errorf("active = %d, want 0", n)
 	}
 }
 
@@ -307,9 +368,9 @@ func TestWaitTextStableGrowing(t *testing.T) {
 	}
 	var deltas []string
 	start := time.Now()
-	waitTextStable(context.Background(), sample, 30*time.Second, 4*time.Second, func(d string) { deltas = append(deltas, d) })
-	if el := time.Since(start); el < 2*time.Second {
-		t.Errorf("growing text should ride the full tail, returned in %s", el)
+	waitTextStable(context.Background(), sample, func() int { return 0 }, 30*time.Second, 4*time.Second, func(d string) { deltas = append(deltas, d) })
+	if el := time.Since(start); el < 500*time.Millisecond {
+		t.Errorf("growing text should outlast one poll, returned in %s", el)
 	}
 	if len(deltas) == 0 {
 		t.Error("growth should stream deltas")
