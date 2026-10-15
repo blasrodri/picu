@@ -67,4 +67,5 @@ one URL. tip: use `--jobs 1` if a host rate-limits shared-IP bursts.
 
 ```bash
 gofmt -l . && go vet ./... && go test -count=1 ./... && go build -o picu .
+PICU_LIVE=1 go test -count=1 -run Live .  # live sites, opt-in only
 ```
