@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // searchResult is one ranked hit: title, direct URL, plain-text snippet.
@@ -152,9 +156,17 @@ func isGoogleConsent(text string) bool {
 
 var reMdLink = regexp.MustCompile(`\]\([^)]*\)`)
 
-// parseGoogle extracts hits from a Google results page. Result anchors
-// point at /url?q=<target>&… with the title inside (often an h3); anchors
-// without an http target are navigation, not results.
+// isGoogleRateLimit reports Google's bare 403 error page, served when the
+// network itself is rate-limited. Unlike consent, no session fixes this:
+// only stopping requests lets it expire.
+func isGoogleRateLimit(text string) bool {
+	return strings.Contains(strings.ToLower(text), "error 403 (forbidden)!!1")
+}
+
+// parseGoogle extracts hits from a Google results page. Each result is
+// one anchor holding the title (usually an h3) plus site and snippet
+// text; the href is /goto?url=<token> (legacy /url?q=<target>) or, rarely,
+// the direct URL. Navigation anchors match neither and drop out.
 func parseGoogle(html string) []searchResult {
 	var out []searchResult
 	for _, m := range reAnchor.FindAllStringSubmatch(html, -1) {
@@ -163,22 +175,55 @@ func parseGoogle(html string) []searchResult {
 		if u == "" {
 			continue
 		}
-		title := strings.TrimSpace(stripInline(inner))
+		title, rest := googleTitleText(inner)
 		if title == "" {
 			title = u
 		}
-		out = append(out, searchResult{Title: title, URL: u})
+		out = append(out, searchResult{Title: title, URL: u, Snippet: rest})
 	}
 	return out
 }
 
-// googleTarget resolves a Google result anchor to its direct URL.
+// googleTitleText splits a result anchor into its heading and the
+// remaining snippet text.
+func googleTitleText(inner string) (title, rest string) {
+	if m := reH3.FindStringSubmatch(inner); m != nil {
+		title = strings.TrimSpace(stripInline(m[1]))
+	}
+	text := strings.TrimSpace(stripInline(inner))
+	if title == "" {
+		if line, _, _ := strings.Cut(text, "\n"); strings.TrimSpace(line) != "" {
+			title = strings.TrimSpace(line)
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == title {
+			continue
+		}
+		if rest != "" {
+			rest += " "
+		}
+		rest += line
+	}
+	return title, rest
+}
+
+var reH3 = regexp.MustCompile(`(?is)<h3[^>]*>(.*?)</h3>`)
+
+// googleTarget resolves a Google result anchor to a fetchable URL: the
+// /goto?url= token link absolutized (resolved to the article later),
+// the legacy /url?q= target unwrapped, or a direct URL. Google-internal
+// hrefs resolve to "".
 func googleTarget(attrs string) string {
 	hm := reHref.FindStringSubmatch(attrs)
 	if hm == nil {
 		return ""
 	}
 	href := htmlUnescape(strings.Trim(hm[1], `"'`))
+	if i := strings.Index(href, "/goto?url="); i >= 0 {
+		return "https://www.google.com" + href[i:]
+	}
 	if i := strings.Index(href, "/url?q="); i >= 0 {
 		rest := href[i+len("/url?q="):]
 		if j := strings.Index(rest, "&"); j >= 0 {
@@ -193,10 +238,53 @@ func googleTarget(attrs string) string {
 	if !strings.HasPrefix(href, "http://") && !strings.HasPrefix(href, "https://") {
 		return ""
 	}
+	// google.* covers translate and other tool links riding inside
+	// result anchors: they are actions, not results.
 	if strings.Contains(strings.ToLower(href), "google.") {
 		return ""
 	}
 	return href
+}
+
+// gotoClient never follows redirects: resolving a /goto token only needs
+// the Location header, never the target's body.
+var gotoClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
+// resolveGoto follows one /goto redirect to the article URL. Anything
+// else passes through unchanged; failures keep the original link so one
+// bad token never sinks the search.
+func resolveGoto(link string, timeout time.Duration) string {
+	u, err := url.Parse(link)
+	if err != nil || !strings.HasPrefix(u.Path, "/goto") {
+		return link
+	}
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", link, nil)
+	if err != nil {
+		return link
+	}
+	req.Header.Set("User-Agent", "picu/"+picuVersion+" (+agent-research)")
+	resp, err := gotoClient.Do(req)
+	if err != nil {
+		return link
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if loc := resp.Header.Get("Location"); loc != "" {
+		if ref, err := url.Parse(loc); err == nil {
+			return u.ResolveReference(ref).String()
+		}
+	}
+	return link
 }
 
 // searchGoogle runs one query through Google in headless Chrome. Google
@@ -211,15 +299,26 @@ func searchGoogle(query string, count int, o fetchOpts) ([]searchResult, error) 
 	if o.profile == "" && !*useReal {
 		return nil, fmt.Errorf("google engine needs an accepted session: --profile NAME or --use-real-profile")
 	}
-	u := "https://www.google.com/search?gbv=1&num=" + fmt.Sprint(n) + "&q=" + url.QueryEscape(query)
+	u := "https://www.google.com/search?num=" + fmt.Sprint(n) + "&q=" + url.QueryEscape(query)
 	html, err := chromeHTML(u, o)
 	if err != nil {
 		return nil, err
 	}
-	if isGoogleConsent(toMarkdown(html)) {
+	if dump := os.Getenv("PICU_DUMP_HTML"); dump != "" {
+		_ = os.WriteFile(dump, []byte(html), 0o600)
+	}
+	md := toMarkdown(html)
+	if isGoogleRateLimit(md) {
+		return nil, fmt.Errorf("google rate limit: automated requests from this network are blocked for now; wait it out (no session fixes this)")
+	}
+	if isGoogleConsent(md) {
 		return nil, fmt.Errorf("google consent wall: use --profile with an accepted session or --use-real-profile (quit Chrome first)")
 	}
-	return parseGoogle(html), nil
+	results := parseGoogle(html)
+	for i, r := range results {
+		results[i].URL = resolveGoto(r.URL, o.timeout)
+	}
+	return results, nil
 }
 
 // runSearchCmd implements `picu search [--engine ddg|google] [--count N] [--json] words…`.
