@@ -639,7 +639,9 @@ func isChallengeMD(md string) bool {
 			return true
 		}
 	}
-	return false
+	// Google's /sorry/ rate-limit page: pair the traffic complaint with
+	// its captcha to avoid flagging articles merely discussing captchas.
+	return strings.Contains(hay, "unusual traffic") && strings.Contains(hay, "captcha")
 }
 
 func waitReady(ctx context.Context, max time.Duration) error {

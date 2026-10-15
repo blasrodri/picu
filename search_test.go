@@ -62,12 +62,24 @@ func TestParseGoogle(t *testing.T) {
 }
 
 func TestGoogleConsent(t *testing.T) {
-	walled := `<html><body><h1>Antes de continuar para a Pesquisa Google</h1><a href="https://consent.google.com/ml?x=1">x</a></body></html>`
+	walled := "Antes de continuar para a Pesquisa Google\nIniciar sesión"
 	if !isGoogleConsent(walled) {
 		t.Error("Portuguese consent page not detected")
 	}
-	if isGoogleConsent(`<html><body><a href="/url?q=https://x.test/&sa=U">T</a></body></html>`) {
+	if isGoogleConsent("[T](/url?q=https://x.test/)") {
 		t.Error("results page flagged as consent wall")
+	}
+	// Consent URLs inside scripts must not trip the wall: detection
+	// runs on rendered text, where scripts never appear.
+	scripty := `<html><head><script>var u="https://consent.google.com/ml?x=1";</script></head><body><p>real results here</p></body></html>`
+	if isGoogleConsent(toMarkdown(scripty)) {
+		t.Error("script-embedded consent URL flagged as wall")
+	}
+	// Footer consent-settings links appear on every accepted results
+	// page; only the wall's heading text counts.
+	accepted := "[Configuración](https://consent.google.com/ml?continue=x)\nWhy Messi retired\nYahoo Sports"
+	if isGoogleConsent(accepted) {
+		t.Error("accepted results page flagged as wall")
 	}
 }
 

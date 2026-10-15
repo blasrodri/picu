@@ -73,8 +73,10 @@ then `picu` the URL.
 output contract instead. Google consent-walls unknown sessions, so it
 needs an accepted session (`--profile` with a prior login or
 `--use-real-profile` with Chrome quit); a wall returns an explicit
-error, never wall text as results. accepted-state parsing is the live
-check still open: run it once with your own session and compare.
+error, never wall text as results. heavy automated use trips Google's
+unusual-traffic rate limit, which needs a human CAPTCHA solve or simply
+waiting it out — the error says which. accepted-state parsing is the
+live check still open: run it once the limit lifts and compare.
 
 ## daemon (opt-in speed)
 

@@ -134,9 +134,14 @@ var googleConsentMarkers = []string{
 	"/sorry/",
 }
 
-// isGoogleConsent reports a consent-walled Google page.
-func isGoogleConsent(html string) bool {
-	hay := strings.ToLower(htmlUnescape(reTags.ReplaceAllString(html, " ")))
+// isGoogleConsent reports a consent-walled Google page from its visible
+// text. It must run on rendered markdown, never raw HTML: scripts and
+// hidden templates on plain results pages mention consent URLs and would
+// false-positive the wall. Markdown link targets are stripped for the
+// same reason: footer links point at consent settings on every results
+// page, accepted or not.
+func isGoogleConsent(text string) bool {
+	hay := strings.ToLower(reMdLink.ReplaceAllString(text, "]()"))
 	for _, m := range googleConsentMarkers {
 		if strings.Contains(hay, m) {
 			return true
@@ -144,6 +149,8 @@ func isGoogleConsent(html string) bool {
 	}
 	return false
 }
+
+var reMdLink = regexp.MustCompile(`\]\([^)]*\)`)
 
 // parseGoogle extracts hits from a Google results page. Result anchors
 // point at /url?q=<target>&… with the title inside (often an h3); anchors
@@ -209,7 +216,7 @@ func searchGoogle(query string, count int, o fetchOpts) ([]searchResult, error) 
 	if err != nil {
 		return nil, err
 	}
-	if isGoogleConsent(html) {
+	if isGoogleConsent(toMarkdown(html)) {
 		return nil, fmt.Errorf("google consent wall: use --profile with an accepted session or --use-real-profile (quit Chrome first)")
 	}
 	return parseGoogle(html), nil

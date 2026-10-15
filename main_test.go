@@ -592,6 +592,19 @@ func TestIsChallengeMD(t *testing.T) {
 	}
 }
 
+func TestIsChallengeMDSorry(t *testing.T) {
+	sorry := "About this page\nOur systems have detected unusual traffic from your computer network. This page checks to see if it's really you sending the requests, and not a robot. In the meantime, solving the above CAPTCHA will let you continue."
+	if !isChallengeMD(sorry) {
+		t.Error("google sorry page not detected")
+	}
+	if isChallengeMD("Why captchas exist\nWe show a captcha to stop abuse.") {
+		t.Error("captcha discussion without traffic complaint flagged")
+	}
+	if isChallengeMD("Unusual traffic hit our backbone last quarter.") {
+		t.Error("traffic report without captcha flagged")
+	}
+}
+
 func TestStaticFetchReusesConnections(t *testing.T) {
 	var mu sync.Mutex
 	seen := map[string]bool{}
