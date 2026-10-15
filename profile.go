@@ -117,6 +117,93 @@ func (p *profile) headerFor(target string) string {
 	return strings.Join(parts, "; ")
 }
 
+// cfCookieNames are the Cloudflare cookies whose freshness gates the fast
+// renderers. cf_clearance is long-lived; __cf_bm lapses in about 30 minutes
+// and only a real browser run can mint a new one.
+var cfCookieNames = map[string]bool{"cf_clearance": true, "__cf_bm": true}
+
+var clearanceRank = map[string]int{"missing": -1, "fresh": 0, "session": 1, "expiring": 2, "expired": 3}
+
+// cookieState ranks one Cloudflare cookie against now.
+func cookieState(c storedCookie, now float64) (string, float64) {
+	if c.Expires <= 0 {
+		return "session", 0
+	}
+	hours := (c.Expires - now) / 3600
+	switch {
+	case hours < 0:
+		return "expired", hours
+	case hours < 6:
+		return "expiring", hours
+	default:
+		return "fresh", hours
+	}
+}
+
+// matchHost applies headerFor's domain rule: exact host or subdomain.
+func matchHost(host, domain string) bool {
+	d := strings.ToLower(strings.TrimPrefix(domain, "."))
+	return host == d || strings.HasSuffix(host, "."+d)
+}
+
+// clearanceForURL scopes Cloudflare state to cookies the target would
+// actually send. An empty target keeps the legacy whole-jar view.
+func clearanceForURL(p *profile, target string) (state string, hours float64) {
+	host := ""
+	if target != "" {
+		if u, err := url.Parse(target); err == nil {
+			host = strings.ToLower(u.Hostname())
+		}
+	}
+	now := float64(time.Now().Unix())
+	state, hours = "missing", 0
+	for _, c := range p.Cookies {
+		if !cfCookieNames[c.Name] {
+			continue
+		}
+		if host != "" && !matchHost(host, c.Domain) {
+			continue
+		}
+		if s, h := cookieState(c, now); clearanceRank[s] > clearanceRank[state] {
+			state, hours = s, h
+		}
+	}
+	return state, hours
+}
+
+// siteClearance summarizes Cloudflare state per cookie domain for doctor,
+// e.g. ".perplexity.ai: fresh, .chatgpt.com: expired".
+func siteClearance(p *profile) string {
+	now := float64(time.Now().Unix())
+	worst := map[string]string{}
+	left := map[string]float64{}
+	var order []string
+	for _, c := range p.Cookies {
+		if !cfCookieNames[c.Name] {
+			continue
+		}
+		s, h := cookieState(c, now)
+		if cur, seen := worst[c.Domain]; !seen {
+			order = append(order, c.Domain)
+			worst[c.Domain], left[c.Domain] = s, h
+		} else if clearanceRank[s] > clearanceRank[cur] {
+			worst[c.Domain], left[c.Domain] = s, h
+		}
+	}
+	if len(order) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(order))
+	for _, d := range order {
+		if worst[d] == "fresh" || worst[d] == "session" || worst[d] == "missing" {
+			parts = append(parts, d+": "+worst[d])
+		} else {
+			parts = append(parts, fmt.Sprintf("%s: %s (%.1fh)", d, worst[d], left[d]))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 // merge replaces cookies by name|domain|path, keeping the rest.
 func (p *profile) merge(in []storedCookie) {
 	idx := map[string]int{}

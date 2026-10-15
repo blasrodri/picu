@@ -237,23 +237,7 @@ func copyMinimalProfile(srcUserData string) (string, func(), error) {
 // clearanceStatus reports Cloudflare clearance state in a profile jar:
 // fresh, expiring, expired, or missing. Callers warn on anything but fresh.
 func clearanceStatus(p *profile) (state string, hours float64) {
-	for _, c := range p.Cookies {
-		if c.Name != "cf_clearance" {
-			continue
-		}
-		if c.Expires <= 0 {
-			return "session", 0
-		}
-		hours = (c.Expires - float64(time.Now().Unix())) / 3600
-		if hours < 0 {
-			return "expired", hours
-		}
-		if hours < 6 {
-			return "expiring", hours
-		}
-		return "fresh", hours
-	}
-	return "missing", 0
+	return clearanceForURL(p, "")
 }
 
 func countForSite(cookies []storedCookie, site string) int {

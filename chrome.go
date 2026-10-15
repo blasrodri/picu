@@ -352,7 +352,7 @@ func chromeFetchHTML(url, profile string, timeout time.Duration, o fetchOpts) (s
 	}
 	if profile != "" {
 		if p, err := loadProfile(profile); err == nil {
-			switch state, hours := clearanceStatus(p); state {
+			switch state, hours := clearanceForURL(p, url); state {
 			case "missing":
 				fmt.Fprintln(os.Stderr, "note: no cf_clearance in profile — expect a bot solve")
 			case "expired":

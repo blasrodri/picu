@@ -160,6 +160,48 @@ func TestClearanceStatus(t *testing.T) {
 	}
 }
 
+func TestClearanceIncludesBM(t *testing.T) {
+	now := float64(time.Now().Unix())
+	p := &profile{Cookies: []storedCookie{
+		{Name: "cf_clearance", Domain: ".perplexity.ai", Expires: now + 8000*3600},
+		{Name: "__cf_bm", Domain: ".perplexity.ai", Expires: now - 60},
+	}}
+	if s, _ := clearanceForURL(p, "https://www.perplexity.ai/search"); s != "expired" {
+		t.Errorf("lapsed __cf_bm should dominate, got %q", s)
+	}
+}
+
+func TestClearanceHostScope(t *testing.T) {
+	now := float64(time.Now().Unix())
+	p := &profile{Cookies: []storedCookie{
+		{Name: "__cf_bm", Domain: ".chatgpt.com", Expires: now - 60},
+		{Name: "cf_clearance", Domain: ".perplexity.ai", Expires: now + 8000*3600},
+		{Name: "__cf_bm", Domain: ".perplexity.ai", Expires: now + 8000*3600},
+	}}
+	if s, _ := clearanceForURL(p, "https://www.perplexity.ai/"); s != "fresh" {
+		t.Errorf("other-site expiry leaked in, got %q", s)
+	}
+	if s, _ := clearanceForURL(p, ""); s != "expired" {
+		t.Errorf("whole-jar view should report worst, got %q", s)
+	}
+}
+
+func TestSiteClearance(t *testing.T) {
+	now := float64(time.Now().Unix())
+	p := &profile{Cookies: []storedCookie{
+		{Name: "cf_clearance", Domain: ".perplexity.ai", Expires: now + 8000*3600},
+		{Name: "__cf_bm", Domain: ".chatgpt.com", Expires: now - 60},
+		{Name: "sess", Domain: ".perplexity.ai", Expires: now + 8000*3600},
+	}}
+	got := siteClearance(p)
+	if !strings.Contains(got, ".perplexity.ai: fresh") || !strings.Contains(got, ".chatgpt.com: expired (") {
+		t.Errorf("per-domain summary wrong: %q", got)
+	}
+	if got2 := siteClearance(&profile{}); got2 != "none" {
+		t.Errorf("empty jar = %q, want none", got2)
+	}
+}
+
 func TestCountForSite(t *testing.T) {
 	cookies := []storedCookie{
 		{Name: "a", Domain: ".perplexity.ai"},

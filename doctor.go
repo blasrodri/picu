@@ -35,9 +35,8 @@ func runDoctor() {
 			if err != nil {
 				continue
 			}
-			state, _ := clearanceStatus(p)
 			fmt.Printf("profile %s: %d cookies, clearance %s, updated %s\n",
-				p.Name, len(p.Cookies), state, p.Updated.Format("2006-01-02 15:04"))
+				p.Name, len(p.Cookies), siteClearance(p), p.Updated.Format("2006-01-02 15:04"))
 			n++
 		}
 	}
