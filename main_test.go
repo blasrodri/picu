@@ -58,7 +58,7 @@ func TestParseNetscape(t *testing.T) {
 }
 
 func TestImportRoundTrip(t *testing.T) {
-	t.Setenv("WEB_CONFIG_HOME", t.TempDir())
+	t.Setenv("PICU_CONFIG_HOME", t.TempDir())
 	n, err := importCookieFile("demo", "/dev/null")
 	if err == nil || n != 0 {
 		t.Errorf("empty file should fail, got n=%d err=%v", n, err)
@@ -76,7 +76,7 @@ func TestImportRoundTrip(t *testing.T) {
 }
 
 func TestFindSystemChromeEnvOverride(t *testing.T) {
-	t.Setenv("WEB_CHROME_BIN", "/bin/true")
+	t.Setenv("PICU_CHROME_BIN", "/bin/true")
 	got, ok := findSystemChrome()
 	if !ok || got != "/bin/true" {
 		t.Errorf("env override = %q, %v", got, ok)
@@ -84,7 +84,7 @@ func TestFindSystemChromeEnvOverride(t *testing.T) {
 }
 
 func TestRealUserDataDirOverride(t *testing.T) {
-	t.Setenv("WEB_CHROME_PROFILE", "/tmp/fake-chrome-profile")
+	t.Setenv("PICU_CHROME_PROFILE", "/tmp/fake-chrome-profile")
 	got, ok := realUserDataDir()
 	if !ok || got != "/tmp/fake-chrome-profile" {
 		t.Errorf("override = %q, %v", got, ok)
@@ -272,6 +272,83 @@ func TestIsChallengeMD(t *testing.T) {
 	}
 	if isChallengeMD("# Example Domain\nreal content here") {
 		t.Error("normal page flagged as challenge")
+	}
+}
+
+func TestCacheIsolatesProfile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CACHE_HOME", tmp)
+	a := fetchOpts{renderer: "static", profile: "work", timeout: time.Second, cacheTTL: time.Hour}
+	b := fetchOpts{renderer: "static", profile: "personal", timeout: time.Second, cacheTTL: time.Hour}
+	if cachePath("https://x.test/a", "static", a) == cachePath("https://x.test/a", "static", b) {
+		t.Fatal("cache key ignores profile: two profiles share one entry")
+	}
+	saveCache("https://x.test/a", "static", "secret-body", "T", a)
+	if _, _, ok := loadCache("https://x.test/a", "static", b); ok {
+		t.Fatal("profile B hit profile A's cache entry")
+	}
+	if md, _, ok := loadCache("https://x.test/a", "static", a); !ok || md != "secret-body" {
+		t.Fatal("profile A should hit its own cache entry")
+	}
+	st, err := os.Stat(cachePath("https://x.test/a", "static", a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Errorf("cache file perm = %o, want 600 (authenticated content)", st.Mode().Perm())
+	}
+}
+
+func TestHeaderForExpiryAndSecure(t *testing.T) {
+	now := float64(time.Now().Unix())
+	p := &profile{Name: "t", Cookies: []storedCookie{
+		{Name: "sess", Value: "abc", Domain: ".example.com", Path: "/", Expires: now + 3600},
+		{Name: "old", Value: "gone", Domain: ".example.com", Path: "/", Expires: now - 3600},
+		{Name: "sec", Value: "s", Domain: ".example.com", Path: "/", Expires: now + 3600, Secure: true},
+	}}
+	https := p.headerFor("https://sub.example.com/a")
+	if !strings.Contains(https, "sess=abc") {
+		t.Errorf("fresh cookie missing over https: %q", https)
+	}
+	if strings.Contains(https, "old=gone") {
+		t.Errorf("expired cookie sent: %q", https)
+	}
+	if !strings.Contains(https, "sec=s") {
+		t.Errorf("secure cookie missing over https: %q", https)
+	}
+	plain := p.headerFor("http://sub.example.com/a")
+	if strings.Contains(plain, "sec=s") {
+		t.Errorf("secure cookie sent over plain http: %q", plain)
+	}
+	if strings.Contains(plain, "old=gone") {
+		t.Errorf("expired cookie sent over plain http: %q", plain)
+	}
+}
+
+func TestProfileNameValidation(t *testing.T) {
+	t.Setenv("PICU_CONFIG_HOME", t.TempDir())
+	for _, bad := range []string{"", "../evil", "..", "a/b", "a b", ".hidden", "x.json", "semi;colon"} {
+		if err := validateProfileName(bad); err == nil {
+			t.Errorf("validateProfileName(%q) accepted", bad)
+		}
+	}
+	for _, good := range []string{"demo", "pplx", "work-1", "a_b"} {
+		if err := validateProfileName(good); err != nil {
+			t.Errorf("validateProfileName(%q) rejected: %v", good, err)
+		}
+	}
+	if _, err := loadProfile("../evil"); err == nil {
+		t.Error("loadProfile accepted traversal name")
+	}
+	if err := saveProfile(&profile{Name: "../evil"}); err == nil {
+		t.Error("saveProfile accepted traversal name")
+	}
+	if _, err := profilePath("../evil"); err == nil {
+		t.Error("profilePath accepted traversal name")
+	}
+	if _, err := webdataDir("../evil"); err == nil {
+		t.Error("webdataDir accepted traversal name")
 	}
 }
 

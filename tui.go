@@ -180,7 +180,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m tuiModel) View() string {
 	switch m.state {
 	case "input":
-		s := titleStyle.Render("web — curl for the agent era") + "\n\n"
+		s := titleStyle.Render("picu — curl for the agent era") + "\n\n"
 		s += "URL: " + m.input + "█\n\n"
 		s += statusStyle.Render("enter fetch · esc quit   e.g. https://example.com/article") + "\n"
 		if m.status != "" {

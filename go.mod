@@ -1,4 +1,4 @@
-module web
+module picu
 
 go 1.26.5
 

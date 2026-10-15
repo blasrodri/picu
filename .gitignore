@@ -1,5 +1,5 @@
 # built binary
-/web
+/picu
 
 # Go build cache artifacts
 *.test

@@ -1,14 +1,14 @@
-# web — curl for the agent era (v0.1)
+# picu — curl for the agent era (v0.1)
 
-`web URL` fetches a page and prints clean markdown within a token
+`picu URL` fetches a page and prints clean markdown within a token
 budget. `--json` returns schema-validated JSON for agents.
 
 ```bash
-go build -o web .
-./web ole.com.ar/article                      # bare domain, all defaults
-./web ole.com.ar/article --json --budget 500  # flags anywhere
-./web --renderer lightpanda example.com        # force JS rendering
-./web --renderer static example.com           # never spawn a browser
+go build -o picu .
+./picu ole.com.ar/article                      # bare domain, all defaults
+./picu ole.com.ar/article --json --budget 500  # flags anywhere
+./picu --renderer lightpanda example.com        # force JS rendering
+./picu --renderer static example.com           # never spawn a browser
 ```
 
 v0.1: static fetch, readability-style strip, token budget, disk cache.
@@ -17,8 +17,8 @@ v0.2: Lightpanda sidecar, `--profile`, `--visible` assist, `--select`.
 ## tui
 
 ```bash
-./web --tui https://example.com/article
-./web --tui   # enter a URL live
+./picu --tui https://example.com/article
+./picu --tui   # enter a URL live
 ```
 
 keys: j/k scroll, g/G top/bottom, / search, J toggle json,
@@ -27,12 +27,12 @@ r refetch, b change url, ? help, q quit.
 ## profiles (auth walls)
 
 ```bash
-web login --profile pplx perplexity.ai              # fresh browser, you log in, Enter captures session
-web login --profile pplx --use-real-profile perplexity.ai  # temp-copy real profile (quit Chrome first)
-web login --profile work --cookie-file cookies.txt  # or import Netscape/CDP JSON
-web profiles
-web --profile pplx --renderer chrome "perplexity.ai/search?q=lightpanda"
-web logout --profile work
+picu login --profile pplx perplexity.ai              # fresh browser, you log in, Enter captures session
+picu login --profile pplx --use-real-profile perplexity.ai  # temp-copy real profile (quit Chrome first)
+picu login --profile work --cookie-file cookies.txt  # or import Netscape/CDP JSON
+picu profiles
+picu --profile pplx --renderer chrome "perplexity.ai/search?q=lightpanda"
+picu logout --profile work
 ```
 
 renderers: static (fast, no JS), lightpanda (cheap JS, cookies via
@@ -52,5 +52,5 @@ renderer opens the session visibly once for a manual solve
 ## gate
 
 ```bash
-gofmt -l . && go vet ./... && go test -count=1 ./... && go build -o web .
+gofmt -l . && go vet ./... && go test -count=1 ./... && go build -o picu .
 ```

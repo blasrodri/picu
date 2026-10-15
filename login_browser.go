@@ -23,7 +23,7 @@ import (
 )
 
 func findSystemChrome() (string, bool) {
-	if p := os.Getenv("WEB_CHROME_BIN"); p != "" {
+	if p := os.Getenv("PICU_CHROME_BIN"); p != "" {
 		return p, true
 	}
 	candidates := []string{"google-chrome", "chromium", "chromium-browser"}
@@ -44,9 +44,9 @@ func findSystemChrome() (string, bool) {
 }
 
 // realUserDataDir locates the user's everyday Chrome profile directory.
-// WEB_CHROME_PROFILE overrides it (also used by tests).
+// PICU_CHROME_PROFILE overrides it (also used by tests).
 func realUserDataDir() (string, bool) {
-	if d := os.Getenv("WEB_CHROME_PROFILE"); d != "" {
+	if d := os.Getenv("PICU_CHROME_PROFILE"); d != "" {
 		return d, true
 	}
 	home, err := os.UserHomeDir()
@@ -94,7 +94,7 @@ func freePort() (int, error) {
 func runInteractiveLogin(site, profileName, userDir string, borrowed bool) {
 	chrome, ok := findSystemChrome()
 	if !ok {
-		fatal("no system Chrome found (set WEB_CHROME_BIN) — fall back to --cookie-file")
+		fatal("no system Chrome found (set PICU_CHROME_BIN) — fall back to --cookie-file")
 	}
 	port, err := freePort()
 	if err != nil {
@@ -187,7 +187,7 @@ var minimalProfileFiles = []string{
 }
 
 func copyMinimalProfile(srcUserData string) (string, func(), error) {
-	tmp, err := os.MkdirTemp("", "web-realprofile-*")
+	tmp, err := os.MkdirTemp("", "picu-realprofile-*")
 	if err != nil {
 		return "", nil, err
 	}

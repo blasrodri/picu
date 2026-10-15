@@ -46,7 +46,7 @@ func lightpandaFetchHTML(url string, maxBytes int, timeout time.Duration, o fetc
 		if err != nil {
 			return "", err
 		}
-		cookieTmp, err := os.CreateTemp("", "web-cookies-*.json")
+		cookieTmp, err := os.CreateTemp("", "picu-cookies-*.json")
 		if err != nil {
 			return "", err
 		}
@@ -55,7 +55,7 @@ func lightpandaFetchHTML(url string, maxBytes int, timeout time.Duration, o fetc
 			return "", err
 		}
 		cookieTmp.Close()
-		jarTmp, err := os.CreateTemp("", "web-cookiejar-*.json")
+		jarTmp, err := os.CreateTemp("", "picu-cookiejar-*.json")
 		if err != nil {
 			return "", err
 		}

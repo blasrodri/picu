@@ -20,7 +20,7 @@ var (
 	tuiMode    = flag.Bool("tui", false, "interactive TUI viewer")
 	renderer   = flag.String("renderer", "auto", "fetch engine: auto|static|lightpanda")
 	profileFlg = flag.String("profile", "", "named cookie profile to send with the request")
-	cookieFile = flag.String("cookie-file", "", "cookie file to import (with: web login)")
+	cookieFile = flag.String("cookie-file", "", "cookie file to import (with: picu login)")
 	useReal    = flag.Bool("use-real-profile", false, "borrow your everyday Chrome profile (quit Chrome first)")
 	loginWait  = flag.Duration("login-timeout", 15*time.Second, "how long to wait for the login browser endpoint")
 	noAssist   = flag.Bool("no-assist", false, "never open a visible browser to solve bot walls")
@@ -43,7 +43,7 @@ var (
 func main() {
 	os.Args = append([]string{os.Args[0]}, reorderArgs(os.Args[1:])...)
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: web [flags] example.com/article\n\n  bare domains work: scheme defaults to https, flags may go before or after the URL.\n\n")
+		fmt.Fprintf(os.Stderr, "usage: picu [flags] example.com/article\n\n  bare domains work: scheme defaults to https, flags may go before or after the URL.\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -197,7 +197,11 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 		_, hasLightpanda := findLightpanda()
 		hasWebdata := false
 		if o.profile != "" {
-			if st, err := os.Stat(filepath.Join(webdataDir(o.profile), "Default")); err == nil && st.IsDir() {
+			wd, werr := webdataDir(o.profile)
+			if werr != nil {
+				return "", "", false, "", werr
+			}
+			if st, err := os.Stat(filepath.Join(wd, "Default")); err == nil && st.IsDir() {
 				hasWebdata = true
 			}
 		}
@@ -278,7 +282,7 @@ func renderViaChrome(url string, o fetchOpts) (md, title string, cached bool, vi
 func staticFetch(url string, o fetchOpts) (html string, status int, err error) {
 	client := &http.Client{Timeout: o.timeout}
 	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "web-cli/0.1 (+agent-research)")
+	req.Header.Set("User-Agent", "picu/0.1 (+agent-research)")
 	if o.profile != "" {
 		if p, err := loadProfile(o.profile); err != nil {
 			return "", 0, err
@@ -541,7 +545,7 @@ func currentOpts() fetchOpts {
 }
 
 // reorderArgs moves flags before positionals so `web example.com --json`
-// works the same as `web --json example.com` with the stdlib flag package.
+// works the same as `picu --json example.com` with the stdlib flag package.
 func reorderArgs(args []string) []string {
 	var flags, rest []string
 	for i := 0; i < len(args); {
@@ -577,12 +581,12 @@ func eqAbsent(a string) bool { return strings.Index(a, "=") < 0 }
 const cacheVersion = "v4"
 
 func cachePath(url, via string, o fetchOpts) string {
-	h := sha1.Sum([]byte(cacheVersion + "|" + via + "|" + o.selector + "|" + url))
+	h := sha1.Sum([]byte(cacheVersion + "|" + via + "|" + o.selector + "|" + o.profile + "|" + url))
 	dir, _ := os.UserCacheDir()
 	if dir == "" {
 		dir = os.TempDir()
 	}
-	return filepath.Join(dir, "web", hex.EncodeToString(h[:])+".json")
+	return filepath.Join(dir, "picu", hex.EncodeToString(h[:])+".json")
 }
 
 func loadCache(url, via string, o fetchOpts) (md, title string, ok bool) {
@@ -608,5 +612,5 @@ func saveCache(url, via, md, title string, o fetchOpts) {
 	p := cachePath(url, via, o)
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	b, _ := json.Marshal(map[string]string{"md": md, "title": title})
-	_ = os.WriteFile(p, b, 0o644)
+	_ = os.WriteFile(p, b, 0o600)
 }

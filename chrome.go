@@ -33,8 +33,11 @@ var sessionTreeDirs = []string{
 	"Session Storage",
 }
 
-func webdataDir(profile string) string {
-	return filepath.Join(configDir(), "profiles", profile+".webdata")
+func webdataDir(profile string) (string, error) {
+	if err := validateProfileName(profile); err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir(), "profiles", profile+".webdata"), nil
 }
 
 func copyFile(src, dst string) error {
@@ -94,7 +97,10 @@ func copySessionTree(srcUserData, dstRoot string) (int64, error) {
 // materializeWebdata snapshots the session files of a logged-in browser dir
 // for later headless renders. Call after the browser is killed.
 func materializeWebdata(srcUserData, profile string) error {
-	dst := webdataDir(profile)
+	dst, err := webdataDir(profile)
+	if err != nil {
+		return err
+	}
 	_ = os.RemoveAll(dst)
 	n, err := copySessionTree(srcUserData, dst)
 	if err != nil {
@@ -136,7 +142,7 @@ func desktopUA() string {
 func launchChrome(headless bool, userDataDir string) (*exec.Cmd, int, error) {
 	chrome, ok := findSystemChrome()
 	if !ok {
-		return nil, 0, fmt.Errorf("no system Chrome found (set WEB_CHROME_BIN)")
+		return nil, 0, fmt.Errorf("no system Chrome found (set PICU_CHROME_BIN)")
 	}
 	port, err := freePort()
 	if err != nil {
@@ -274,8 +280,12 @@ func renderHeadless(url, profileName, userDir string, overall time.Duration, o f
 // the same session visibly once so they solve it by hand; the resulting
 // clearance cookie lands in the session files and later runs pass silently.
 func chromeFetchHTML(url, profile string, timeout time.Duration, o fetchOpts) (string, error) {
-	if st, err := os.Stat(filepath.Join(webdataDir(profile), "Default")); err != nil || !st.IsDir() {
-		return "", fmt.Errorf("no saved session files for profile %q — re-run web login to materialize them", profile)
+	wd, err := webdataDir(profile)
+	if err != nil {
+		return "", err
+	}
+	if st, err := os.Stat(filepath.Join(wd, "Default")); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("no saved session files for profile %q — re-run picu login to materialize them", profile)
 	}
 	// The chrome renderer is the heavy path: challenge solves plus streamed
 	// answers need minutes, not seconds. Never run it on less than that.
@@ -295,7 +305,7 @@ func chromeFetchHTML(url, profile string, timeout time.Duration, o fetchOpts) (s
 			}
 		}
 	}
-	html, err := renderHeadless(url, profile, webdataDir(profile), overall, o)
+	html, err := renderHeadless(url, profile, wd, overall, o)
 	if err == nil {
 		return html, nil
 	}
@@ -305,7 +315,7 @@ func chromeFetchHTML(url, profile string, timeout time.Duration, o fetchOpts) (s
 	if err := assistedSolve(url, profile); err != nil {
 		return "", err
 	}
-	return renderHeadless(url, profile, webdataDir(profile), overall, o)
+	return renderHeadless(url, profile, wd, overall, o)
 }
 
 func isBotStuck(err error) bool {
@@ -317,7 +327,11 @@ func isBotStuck(err error) bool {
 // files and is merged back into the cookie jar for the other renderers.
 func assistedSolve(url, profileName string) error {
 	fmt.Printf("headless is walled — opening your session visibly at %s\nsolve it there, then press Enter here…\n", url)
-	cmd, port, err := launchChrome(false, webdataDir(profileName))
+	wd, err := webdataDir(profileName)
+	if err != nil {
+		return err
+	}
+	cmd, port, err := launchChrome(false, wd)
 	if err != nil {
 		return err
 	}
