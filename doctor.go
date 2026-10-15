@@ -37,6 +37,9 @@ func runDoctor() {
 			}
 			fmt.Printf("profile %s: %d cookies, clearance %s, updated %s\n",
 				p.Name, len(p.Cookies), siteClearance(p), p.Updated.Format("2006-01-02 15:04"))
+			if wd, err := webdataDir(p.Name); err == nil {
+				fmt.Printf("  daemon: %s\n", daemonStatus(wd))
+			}
 			n++
 		}
 	}
@@ -46,4 +49,21 @@ func runDoctor() {
 	dir, _ := os.UserCacheDir()
 	fmt.Printf("config: %s\n", configDir())
 	fmt.Printf("cache: %s\n", filepath.Join(dir, "picu"))
+	if daemonEnabled() {
+		fmt.Println("daemon: enabled (PICU_DAEMON=1)")
+	} else {
+		fmt.Println("daemon: off (set PICU_DAEMON=1 to keep one browser across runs)")
+	}
+}
+
+// daemonStatus reports the recorded browser for a snapshot dir.
+func daemonStatus(userDir string) string {
+	d, found := readDaemon(userDir)
+	if !found {
+		return "none"
+	}
+	if _, err := debuggerURL(d.Port); err != nil {
+		return "stale"
+	}
+	return fmt.Sprintf(":%d (reused across runs)", d.Port)
 }

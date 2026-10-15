@@ -362,7 +362,7 @@ func renderViaBorrowed(url string, o fetchOpts) (md, title string, cached bool, 
 		return "", "", false, "", err
 	}
 	defer cleanup()
-	html, err := renderHeadless(url, "", tmp, 3*o.timeout, o)
+	html, err := renderHeadless(url, "", tmp, 3*o.timeout, o, false)
 	if err != nil {
 		return "", "", false, "", err
 	}

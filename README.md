@@ -57,6 +57,15 @@ renderer opens the session visibly once for a manual solve
 lightpanda first using the profile session, falling back to chrome on
 a bot challenge — solve once in chrome, read fast in lightpanda.
 
+## daemon (opt-in speed)
+
+`PICU_DAEMON=1` keeps one headless Chrome alive across runs, so repeat
+chrome fetches skip the spawn (~0.9s all-in for a simple page). records
+live under the cache dir; stale, idle (>5min), and post-upgrade
+browsers are reaped automatically, a lock held by a live daemon is
+reused instead of fought, and every failure falls back to a cold
+launch. `picu doctor` shows daemon state per profile.
+
 ## batch
 
 ```bash

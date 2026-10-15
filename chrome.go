@@ -140,15 +140,9 @@ func desktopUA() string {
 	return cachedUA
 }
 
-func launchChrome(headless bool, userDataDir string) (*exec.Cmd, int, error) {
-	chrome, ok := findSystemChrome()
-	if !ok {
-		return nil, 0, fmt.Errorf("no system Chrome found (set PICU_CHROME_BIN)")
-	}
-	port, err := freePort()
-	if err != nil {
-		return nil, 0, err
-	}
+// chromeArgs builds the launch flags shared by cold starts, the daemon,
+// and the visible assist browser so every Chrome picu runs behaves alike.
+func chromeArgs(headless bool, userDataDir string, port int) []string {
 	args := []string{
 		fmt.Sprintf("--user-data-dir=%s", userDataDir),
 		fmt.Sprintf("--remote-debugging-port=%d", port),
@@ -160,7 +154,19 @@ func launchChrome(headless bool, userDataDir string) (*exec.Cmd, int, error) {
 			"--user-agent="+desktopUA(),
 			"--disable-blink-features=AutomationControlled")
 	}
-	cmd := exec.Command(chrome, args...)
+	return args
+}
+
+func launchChrome(headless bool, userDataDir string) (*exec.Cmd, int, error) {
+	chrome, ok := findSystemChrome()
+	if !ok {
+		return nil, 0, fmt.Errorf("no system Chrome found (set PICU_CHROME_BIN)")
+	}
+	port, err := freePort()
+	if err != nil {
+		return nil, 0, err
+	}
+	cmd := exec.Command(chrome, chromeArgs(headless, userDataDir, port)...)
 	var errLog strings.Builder
 	cmd.Stdout, cmd.Stderr = nil, &errLog
 	if err := cmd.Start(); err != nil {
@@ -288,16 +294,57 @@ func evictChrome(userDir string) {
 	}
 }
 
-func renderHeadless(url, profileName, userDir string, overall time.Duration, o fetchOpts) (string, error) {
-	s, err := acquireChrome(userDir)
-	if err != nil {
-		return "", err
+func renderHeadless(url, profileName, userDir string, overall time.Duration, o fetchOpts, useDaemon bool) (string, error) {
+	wsURL := ""
+	if useDaemon && daemonEnabled() {
+		if d, fresh, ok := daemonGet(userDir); ok {
+			wsURL = d.WSURL
+			if fresh {
+				fmt.Fprintf(os.Stderr, "chrome daemon: started :%d\n", d.Port)
+			} else {
+				fmt.Fprintf(os.Stderr, "chrome daemon: reused :%d\n", d.Port)
+			}
+		}
 	}
-	defer s.release(userDir)
+	var s *sharedChrome
+	if wsURL == "" && hasDaemonRecord(userDir) {
+		// A recorded browser may hold this profile (or be its stale
+		// orphan): prefer the daemon path before a cold launch can
+		// burn 20s on its lock.
+		if d, fresh, ok := daemonGet(userDir); ok {
+			wsURL = d.WSURL
+			if fresh {
+				fmt.Fprintf(os.Stderr, "chrome daemon: started :%d\n", d.Port)
+			} else {
+				fmt.Fprintf(os.Stderr, "chrome daemon: reused :%d\n", d.Port)
+			}
+		}
+	}
+	if wsURL == "" {
+		var err error
+		s, err = acquireChrome(userDir)
+		if err != nil {
+			// A live daemon may hold this profile (e.g. from an
+			// earlier PICU_DAEMON=1 run): rescue via reuse instead
+			// of dying on its lock.
+			if isLockErr(err) {
+				if d, _, ok := daemonGet(userDir); ok {
+					fmt.Fprintln(os.Stderr, "chrome daemon: rescued locked profile")
+					wsURL = d.WSURL
+				}
+			}
+			if wsURL == "" {
+				return "", err
+			}
+		} else {
+			defer s.release(userDir)
+			wsURL = s.wsURL
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), overall)
 	defer cancel()
-	allocCtx, cancelAlloc := remote.NewAllocator(ctx, s.wsURL)
+	allocCtx, cancelAlloc := remote.NewAllocator(ctx, wsURL)
 	defer cancelAlloc()
 	taskCtx, cancelTask := chromedp.NewContext(allocCtx)
 	defer cancelTask()
@@ -450,7 +497,7 @@ func chromeFetchHTML(url, profile string, timeout time.Duration, o fetchOpts) (s
 			}
 		}
 	}
-	html, err := renderHeadless(url, profile, wd, overall, o)
+	html, err := renderHeadless(url, profile, wd, overall, o, true)
 	if err == nil {
 		return html, nil
 	}
@@ -458,10 +505,11 @@ func chromeFetchHTML(url, profile string, timeout time.Duration, o fetchOpts) (s
 		return "", err
 	}
 	evictChrome(wd)
+	daemonKill(wd)
 	if err := assistedSolve(url, profile); err != nil {
 		return "", err
 	}
-	return renderHeadless(url, profile, wd, overall, o)
+	return renderHeadless(url, profile, wd, overall, o, true)
 }
 
 func isBotStuck(err error) bool {
