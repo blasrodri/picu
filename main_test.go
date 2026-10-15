@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -587,6 +589,29 @@ func TestIsChallengeMD(t *testing.T) {
 	}
 	if isChallengeMD("# Example Domain\nreal content here") {
 		t.Error("normal page flagged as challenge")
+	}
+}
+
+func TestStaticFetchReusesConnections(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.RemoteAddr] = true
+		mu.Unlock()
+		fmt.Fprint(w, "<html><body><p>hello</p></body></html>")
+	}))
+	defer srv.Close()
+	o := fetchOpts{renderer: "static", timeout: 5 * time.Second}
+	for i := 0; i < 2; i++ {
+		if _, _, err := staticFetch(srv.URL, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Errorf("two sequential fetches used %d connections, want 1 shared", len(seen))
 	}
 }
 

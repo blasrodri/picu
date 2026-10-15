@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -376,9 +377,19 @@ func renderViaBorrowed(url string, o fetchOpts) (md, title string, cached bool, 
 	return md, title, false, v, nil
 }
 
+// sharedHTTPClient reuses TCP/TLS connections across fetches in one run.
+// Timeouts ride the request context so a single client serves every
+// budget; a fresh client per fetch would redo TLS on every URL.
+var sharedHTTPClient = &http.Client{}
+
 func staticFetch(url string, o fetchOpts) (html string, status int, err error) {
-	client := &http.Client{Timeout: o.timeout}
-	req, _ := http.NewRequest("GET", url, nil)
+	ctx := context.Background()
+	if o.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, o.timeout)
+		defer cancel()
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	req.Header.Set("User-Agent", "picu/"+picuVersion+" (+agent-research)")
 	if o.profile != "" {
 		if p, err := loadProfile(o.profile); err != nil {
@@ -387,7 +398,7 @@ func staticFetch(url string, o fetchOpts) (html string, status int, err error) {
 			req.Header.Set("Cookie", hdr)
 		}
 	}
-	resp, err := client.Do(req)
+	resp, err := sharedHTTPClient.Do(req)
 	if err != nil {
 		return "", 0, err
 	}
