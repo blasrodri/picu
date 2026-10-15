@@ -247,7 +247,11 @@ func renderHeadless(url, profileName, userDir string, overall time.Duration, o f
 		expr = fmt.Sprintf("(s => { const el = document.querySelector(%q); return el ? el.outerHTML : null; })()", o.selector)
 	} else {
 		tStable := time.Now()
-		waitTextStable(taskCtx, 45*time.Second, o.settle, func(delta string) {
+		sample := func() (string, bool) {
+			s, err := evalString(taskCtx, "document.body ? document.body.innerText : ''")
+			return s, err == nil
+		}
+		waitTextStable(taskCtx, sample, 45*time.Second, o.settle, func(delta string) {
 			fmt.Fprint(os.Stderr, delta)
 		})
 		fmt.Fprintf(os.Stderr, "timings: navigate+ready %s challenge-wait %s stream-settle %s\n",
@@ -532,10 +536,46 @@ func streamDelta(prev, text string) (string, bool) {
 
 // waitTextStable waits until the visible text stops growing (streamed
 // answers) or gives up and lets the caller dump whatever exists.
-// --settle controls how long the text must hold still (default 6s).
+// --settle controls how long growing text must hold still (default 6s).
+// Text already still needs only two one-second confirmations, so static
+// pages return in ~2s instead of paying the full streaming tail.
 // onDelta receives each newly streamed suffix so callers can show progress
 // (stderr) while the final document still goes to stdout intact.
-func waitTextStable(ctx context.Context, max, settle time.Duration, onDelta func(string)) {
+func waitTextStable(ctx context.Context, sample func() (string, bool), max, settle time.Duration, onDelta func(string)) {
+	deadline := time.Now().Add(max)
+	sleep := func(d time.Duration) bool {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(d):
+			return !time.Now().After(deadline)
+		}
+	}
+	seed, seeded := "", false
+	emit := func(prev, text string) {
+		if onDelta == nil {
+			return
+		}
+		if delta, ok := streamDelta(prev, text); ok {
+			onDelta(delta)
+		}
+	}
+	if a, ok := sample(); ok && a != "" {
+		if sleep(time.Second) {
+			if b, ok := sample(); ok {
+				if b == a {
+					if sleep(time.Second) {
+						if c, ok := sample(); ok && c == b {
+							return
+						}
+					}
+				} else {
+					emit(a, b)
+				}
+				seed, seeded = b, true
+			}
+		}
+	}
 	need := int(settle.Seconds() / 2)
 	if need < 1 {
 		need = 1
@@ -543,13 +583,11 @@ func waitTextStable(ctx context.Context, max, settle time.Duration, onDelta func
 	if need > 5 {
 		need = 5
 	}
-	deadline := time.Now().Add(max)
 	var last []int
-	var prev string
-	first := true
+	prev, first := seed, !seeded
 	for {
 		text, n := "", -1
-		if s, err := evalString(ctx, "document.body ? document.body.innerText : ''"); err == nil {
+		if s, ok := sample(); ok {
 			text, n = s, len(s)
 		}
 		last = append(last, n)

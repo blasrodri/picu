@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -280,6 +281,38 @@ func TestStreamDelta(t *testing.T) {
 	}
 	if _, ok := streamDelta("same", "same"); ok {
 		t.Error("no-change must not emit")
+	}
+}
+
+func TestWaitTextStableFastPath(t *testing.T) {
+	calls := 0
+	sample := func() (string, bool) { calls++; return "hello world", true }
+	start := time.Now()
+	waitTextStable(context.Background(), sample, 30*time.Second, 6*time.Second, nil)
+	el := time.Since(start)
+	if el < 2*time.Second || el > 8*time.Second {
+		t.Errorf("static page should settle in ~2s, took %s (%d samples)", el, calls)
+	}
+}
+
+func TestWaitTextStableGrowing(t *testing.T) {
+	script := []string{"a", "ab", "abc", "abc", "abc", "abc", "abc"}
+	i := 0
+	sample := func() (string, bool) {
+		s := script[i]
+		if i < len(script)-1 {
+			i++
+		}
+		return s, true
+	}
+	var deltas []string
+	start := time.Now()
+	waitTextStable(context.Background(), sample, 30*time.Second, 4*time.Second, func(d string) { deltas = append(deltas, d) })
+	if el := time.Since(start); el < 2*time.Second {
+		t.Errorf("growing text should ride the full tail, returned in %s", el)
+	}
+	if len(deltas) == 0 {
+		t.Error("growth should stream deltas")
 	}
 }
 
