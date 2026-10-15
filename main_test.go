@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -114,6 +116,28 @@ func TestCdpFileCarriesExpiry(t *testing.T) {
 	}
 }
 
+func TestCdpFileUsesLowercaseKeys(t *testing.T) {
+	p := &profile{Name: "t", Cookies: []storedCookie{
+		{Name: "sess", Value: "abc", Domain: ".example.com", Path: "/"},
+	}}
+	f := t.TempDir() + "/c.json"
+	if err := p.cdpFile(f); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(f)
+	s := string(b)
+	for _, k := range []string{`"name":`, `"value":`, `"domain":`, `"path":`} {
+		if !strings.Contains(s, k) {
+			t.Errorf("cdp file missing lowercase key %s: %s", k, s)
+		}
+	}
+	for _, k := range []string{`"Name":`, `"Value":`, `"Domain":`, `"Path":`} {
+		if strings.Contains(s, k) {
+			t.Errorf("cdp file has capitalized key %s (lightpanda rejects it): %s", k, s)
+		}
+	}
+}
+
 func TestClearanceStatus(t *testing.T) {
 	now := float64(time.Now().Unix())
 	fresh := &profile{Cookies: []storedCookie{{Name: "cf_clearance", Expires: now + 8000*3600}}}
@@ -192,7 +216,7 @@ func TestRenderPlan(t *testing.T) {
 		{false, false, true, []string{"lightpanda"}},
 		{true, false, true, []string{"lightpanda"}},
 		{true, true, false, []string{"chrome"}},
-		{true, true, true, []string{"chrome", "lightpanda"}},
+		{true, true, true, []string{"lightpanda", "chrome"}},
 	} {
 		if got := renderPlan(tc.prof, tc.web, tc.lp); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("renderPlan(%v,%v,%v) = %q, want %q", tc.prof, tc.web, tc.lp, got, tc.want)
@@ -263,6 +287,49 @@ func TestCopySessionTree(t *testing.T) {
 	}
 	if _, err := os.Stat(dst + "/Default/Local Storage/leveldb/LOCK"); !os.IsNotExist(err) {
 		t.Error("LOCK must be skipped")
+	}
+}
+
+func TestRenderViaLightpandaRejectsChallenge(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	page := tmp + "/page.html"
+	os.WriteFile(page, []byte("<html><head><title>www.perplexity.ai</title></head><body><p>Performing security verification</p><p>Ray ID: 123</p></body></html>"), 0o644)
+	bin := tmp + "/lightpanda"
+	os.WriteFile(bin, []byte("#!/bin/sh\ncat "+page+"\n"), 0o755)
+	t.Setenv("LIGHTPANDA_BIN", bin)
+	o := fetchOpts{renderer: "lightpanda", timeout: 5 * time.Second, cacheTTL: time.Hour}
+	_, _, _, _, err := renderViaLightpanda("https://x.test/", o)
+	if err == nil || !strings.Contains(err.Error(), "bot verification") {
+		t.Fatalf("challenge page should error, got %v", err)
+	}
+	if _, _, ok := loadCache("https://x.test/", "lightpanda", o); ok {
+		t.Error("challenge page must not be cached")
+	}
+}
+
+func TestAutoFallsThroughStaticBlock(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	page := tmp + "/page.html"
+	os.WriteFile(page, []byte("<html><head><title>real page</title></head><body><p>real answer content here</p></body></html>"), 0o644)
+	bin := tmp + "/lightpanda"
+	os.WriteFile(bin, []byte("#!/bin/sh\ncat "+page+"\n"), 0o755)
+	t.Setenv("LIGHTPANDA_BIN", bin)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	o := fetchOpts{renderer: "auto", timeout: 5 * time.Second}
+	md, _, _, via, err := get(srv.URL, o)
+	if err != nil {
+		t.Fatalf("auto should fall through a static 403 to lightpanda, got %v", err)
+	}
+	if via != "lightpanda" {
+		t.Errorf("via = %q, want lightpanda", via)
+	}
+	if !strings.Contains(md, "real answer content here") {
+		t.Errorf("wrong body: %q", md)
 	}
 }
 

@@ -172,6 +172,7 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 		return "", "", false, "", fmt.Errorf("--select needs a JS renderer: use --renderer lightpanda|chrome (or drop --renderer)")
 	}
 	var html string
+	var staticBlocked error
 	if o.selector == "" {
 		if o.cacheTTL > 0 {
 			if b, t, ok := loadCache(url, "static", o); ok {
@@ -183,18 +184,24 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 		html, status, err = staticFetch(url, o)
 		_ = status
 		if err != nil {
-			return "", "", false, "", err
-		}
-		md = toMarkdown(html)
-		if !isJSShell(html, md) {
-			title = "untitled"
-			if m := reTitle.FindStringSubmatch(html); len(m) == 2 {
-				title = strings.TrimSpace(reTags.ReplaceAllString(m[1], ""))
+			if want == "auto" && isBlockedErr(err) {
+				fmt.Fprintf(os.Stderr, "static %v — trying JS renderers\n", err)
+				staticBlocked = err
+			} else {
+				return "", "", false, "", err
 			}
-			if o.cacheTTL > 0 {
-				saveCache(url, "static", md, title, o)
+		} else {
+			md = toMarkdown(html)
+			if !isJSShell(html, md) {
+				title = "untitled"
+				if m := reTitle.FindStringSubmatch(html); len(m) == 2 {
+					title = strings.TrimSpace(reTags.ReplaceAllString(m[1], ""))
+				}
+				if o.cacheTTL > 0 {
+					saveCache(url, "static", md, title, o)
+				}
+				return md, title, false, "static", nil
 			}
-			return md, title, false, "static", nil
 		}
 	} else {
 		fmt.Fprintln(os.Stderr, "--select needs a JS renderer — skipping static fetch")
@@ -222,10 +229,17 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 					fmt.Fprintln(os.Stderr, "chrome render: "+cerr.Error())
 				}
 			case "lightpanda":
-				return renderViaLightpanda(url, o)
+				if lmd, ltitle, lcached, _, lerr := renderViaLightpanda(url, o); lerr == nil {
+					return lmd, ltitle, lcached, "lightpanda", nil
+				} else {
+					fmt.Fprintln(os.Stderr, "lightpanda render: "+lerr.Error())
+				}
 			}
 		}
 		if md == "" {
+			if staticBlocked != nil {
+				return "", "", false, "", staticBlocked
+			}
 			return "", "", false, "", fmt.Errorf("no JS renderer available (install lightpanda or log in a profile for chrome)")
 		}
 		fmt.Fprintln(os.Stderr, "no JS renderer available — returning thin static output")
@@ -238,6 +252,12 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 		saveCache(url, "static", md, title, o)
 	}
 	return md, title, false, "static", nil
+}
+
+// isBlockedErr reports a static-fetch refusal (HTTP 403/429 or a
+// recognized bot-wall page) as opposed to a transport failure.
+func isBlockedErr(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "blocked:")
 }
 
 func renderViaLightpanda(url string, o fetchOpts) (md, title string, cached bool, via string, err error) {
@@ -255,6 +275,9 @@ func renderViaLightpanda(url string, o fetchOpts) (md, title string, cached bool
 		title = strings.TrimSpace(reTags.ReplaceAllString(m[1], ""))
 	}
 	md = toMarkdown(html)
+	if isChallengeMD(md) {
+		return "", "", false, "", fmt.Errorf("page stuck on bot verification (it may need an interactive solve)")
+	}
 	if o.cacheTTL > 0 {
 		saveCache(url, "lightpanda", md, title, o)
 	}
@@ -511,16 +534,18 @@ func applyBudget(md string, tokens int) string {
 	return md[:cut] + "\n\n…(truncated to budget)"
 }
 
-// renderPlan lists fallback engines after a thin static fetch, in order.
-// Chrome needs a profile with saved session files; lightpanda just needs
-// its binary. Called only when static output looked like a JS shell.
+// renderPlan lists fallback engines after a thin static fetch, in order:
+// lightpanda reads fast with the profile's session cookies, chrome is the
+// solver fallback for pages that challenge lightpanda. Chrome needs a
+// profile with saved session files; lightpanda just needs its binary.
+// Called only when static output looked like a JS shell.
 func renderPlan(hasProfile, hasWebdata, hasLightpanda bool) []string {
 	var plan []string
-	if hasProfile && hasWebdata {
-		plan = append(plan, "chrome")
-	}
 	if hasLightpanda {
 		plan = append(plan, "lightpanda")
+	}
+	if hasProfile && hasWebdata {
+		plan = append(plan, "chrome")
 	}
 	return plan
 }

@@ -41,7 +41,9 @@ one for signed-in SPAs, with desktop UA and no automation flag so bot
 walls treat it as a normal browser). login snapshots session files for
 the chrome renderer automatically. if a wall still holds, the chrome
 renderer opens the session visibly once for a manual solve
-(`--no-assist` disables that).
+(`--no-assist` disables that). auto mode (the default) reads with
+lightpanda first using the profile session, falling back to chrome on
+a bot challenge — solve once in chrome, read fast in lightpanda.
 
 ## batch
 
