@@ -315,6 +315,62 @@ func TestCopyMinimalProfile(t *testing.T) {
 	}
 }
 
+func TestBorrowForFetch(t *testing.T) {
+	src := t.TempDir()
+	os.MkdirAll(src+"/Default/Network", 0o755)
+	os.MkdirAll(src+"/Default/Local Storage/leveldb", 0o755)
+	os.WriteFile(src+"/Default/Cookies", []byte("cdb"), 0o600)
+	os.WriteFile(src+"/Default/Local Storage/leveldb/000001.ldb", []byte("tok"), 0o600)
+	os.WriteFile(src+"/Default/Login Data", []byte("passwords"), 0o600)
+	os.WriteFile(src+"/Local State", []byte("{}"), 0o600)
+	tmp, cleanup, err := borrowForFetch(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Default/Cookies",
+		"Default/Local Storage/leveldb/000001.ldb",
+		"Local State",
+	} {
+		if _, err := os.Stat(tmp + "/" + want); err != nil {
+			t.Errorf("borrow missing %s: %v", want, err)
+		}
+	}
+	if _, err := os.Stat(tmp + "/Default/Login Data"); !os.IsNotExist(err) {
+		t.Error("password stores must never be borrowed")
+	}
+	if st, _ := os.Stat(tmp + "/Default/Cookies"); st.Mode().Perm() != 0o600 {
+		t.Errorf("borrowed Cookies perm = %o, want 600", st.Mode().Perm())
+	}
+	cleanup()
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Error("cleanup should remove the temp copy")
+	}
+	if _, _, err := borrowForFetch(t.TempDir()); err == nil {
+		t.Error("empty dir should fail")
+	}
+}
+
+func TestUseRealNeedsChrome(t *testing.T) {
+	old := *useReal
+	*useReal = true
+	defer func() { *useReal = old }()
+	_, _, _, _, err := get("https://x.test/", fetchOpts{renderer: "static"})
+	if err == nil || !strings.Contains(err.Error(), "--use-real-profile") {
+		t.Errorf("static+use-real should fail fast, got %v", err)
+	}
+}
+
+func TestDocFromHTML(t *testing.T) {
+	title, md, err := docFromHTML("<html><head><title>T</title></head><body><p>real answer content here</p></body></html>")
+	if err != nil || title != "T" || !strings.Contains(md, "real answer content") {
+		t.Errorf("doc = %q %q %v", title, md, err)
+	}
+	if _, _, err := docFromHTML("<html><body>Performing security verification Ray ID: 1</body></html>"); err == nil {
+		t.Error("challenge page should error, not serve")
+	}
+}
+
 func TestCopySessionTree(t *testing.T) {
 	src := t.TempDir()
 	os.MkdirAll(src+"/Default/Local Storage/leveldb", 0o755)

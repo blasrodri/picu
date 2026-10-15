@@ -22,7 +22,7 @@ var (
 	versionFlag = flag.Bool("version", false, "print version and exit")
 	profileFlg  = flag.String("profile", "", "named cookie profile to send with the request")
 	cookieFile  = flag.String("cookie-file", "", "cookie file to import (with: picu login)")
-	useReal     = flag.Bool("use-real-profile", false, "borrow your everyday Chrome profile (quit Chrome first)")
+	useReal     = flag.Bool("use-real-profile", false, "fetch with your everyday Chrome profile: pages load with your real sessions, no per-site login (quit Chrome first)")
 	loginWait   = flag.Duration("login-timeout", 15*time.Second, "how long to wait for the login browser endpoint")
 	noAssist    = flag.Bool("no-assist", false, "never open a visible browser to solve bot walls")
 	settle      = flag.Duration("settle", 6*time.Second, "how long rendered text must hold still (streamed answers)")
@@ -174,10 +174,16 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 	if err := checkExtract(o.extract); err != nil {
 		return "", "", false, "", err
 	}
+	if *useReal && (want == "static" || want == "lightpanda") {
+		return "", "", false, "", fmt.Errorf("--use-real-profile borrows the Chrome session, so it needs --renderer chrome (or auto)")
+	}
 	if want == "lightpanda" {
 		return renderViaLightpanda(url, o)
 	}
 	if want == "chrome" {
+		if *useReal {
+			return renderViaBorrowed(url, o)
+		}
 		return renderViaChrome(url, o)
 	}
 	if want == "static" && o.selector != "" {
@@ -232,6 +238,9 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 			}
 		}
 		plan := renderPlan(o.profile != "", hasWebdata, hasLightpanda)
+		if *useReal {
+			plan = []string{"chrome"}
+		}
 		fmt.Fprintf(os.Stderr, "renderer plan: %s\n", strings.Join(plan, " → "))
 		for _, engine := range plan {
 			switch engine {
@@ -283,19 +292,29 @@ func renderViaLightpanda(url string, o fetchOpts) (md, title string, cached bool
 	if err != nil {
 		return "", "", false, "", err
 	}
-	title = "untitled"
-	if m := reTitle.FindStringSubmatch(html); len(m) == 2 {
-		title = strings.TrimSpace(reTags.ReplaceAllString(m[1], ""))
-	}
-	md = toMarkdown(html)
-	if isChallengeMD(md) {
-		return "", "", false, "", fmt.Errorf("page stuck on bot verification (it may need an interactive solve)")
+	title, md, err = docFromHTML(html)
+	if err != nil {
+		return "", "", false, "", err
 	}
 	md = applyExtract(html, md, o.extract)
 	if o.cacheTTL > 0 {
 		saveCache(url, "lightpanda", md, title, o)
 	}
 	return md, title, false, "lightpanda", nil
+}
+
+// docFromHTML converts rendered HTML to the output document, rejecting
+// bot-verification pages so they are never cached or served as content.
+func docFromHTML(html string) (title, md string, err error) {
+	title = "untitled"
+	if m := reTitle.FindStringSubmatch(html); len(m) == 2 {
+		title = strings.TrimSpace(reTags.ReplaceAllString(m[1], ""))
+	}
+	md = toMarkdown(html)
+	if isChallengeMD(md) {
+		return "", "", fmt.Errorf("page stuck on bot verification (it may need an interactive solve)")
+	}
+	return title, md, nil
 }
 
 func renderViaChrome(url string, o fetchOpts) (md, title string, cached bool, via string, err error) {
@@ -308,19 +327,53 @@ func renderViaChrome(url string, o fetchOpts) (md, title string, cached bool, vi
 	if err != nil {
 		return "", "", false, "", err
 	}
-	title = "untitled"
-	if m := reTitle.FindStringSubmatch(html); len(m) == 2 {
-		title = strings.TrimSpace(reTags.ReplaceAllString(m[1], ""))
-	}
-	md = toMarkdown(html)
-	if isChallengeMD(md) {
-		return "", "", false, "", fmt.Errorf("page stuck on bot verification (it may need an interactive solve)")
+	title, md, err = docFromHTML(html)
+	if err != nil {
+		return "", "", false, "", err
 	}
 	md = applyExtract(html, md, o.extract)
 	if o.cacheTTL > 0 {
 		saveCache(url, "chrome", md, title, o)
 	}
 	return md, title, false, "chrome", nil
+}
+
+// renderViaBorrowed renders with headless Chrome on a temp copy of the
+// everyday browser profile, so pages load with the user's real sessions
+// (including OAuth) and no per-site login. The original profile is never
+// touched; the copy is removed afterwards.
+func renderViaBorrowed(url string, o fetchOpts) (md, title string, cached bool, via string, err error) {
+	const v = "chrome-real"
+	if o.cacheTTL > 0 {
+		if b, t, ok := loadCache(url, v, o); ok {
+			return b, t, true, v, nil
+		}
+	}
+	realDir, ok := realUserDataDir()
+	if !ok {
+		return "", "", false, "", fmt.Errorf("no everyday Chrome profile found (set PICU_CHROME_PROFILE to point at one)")
+	}
+	if chromeRunning() {
+		return "", "", false, "", fmt.Errorf("Chrome is running and owns its profile — quit Chrome completely, then rerun")
+	}
+	tmp, cleanup, err := borrowForFetch(realDir)
+	if err != nil {
+		return "", "", false, "", err
+	}
+	defer cleanup()
+	html, err := renderHeadless(url, "", tmp, 3*o.timeout, o)
+	if err != nil {
+		return "", "", false, "", err
+	}
+	title, md, err = docFromHTML(html)
+	if err != nil {
+		return "", "", false, "", err
+	}
+	md = applyExtract(html, md, o.extract)
+	if o.cacheTTL > 0 {
+		saveCache(url, v, md, title, o)
+	}
+	return md, title, false, v, nil
 }
 
 func staticFetch(url string, o fetchOpts) (html string, status int, err error) {

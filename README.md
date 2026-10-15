@@ -36,6 +36,17 @@ picu --profile pplx --renderer chrome "perplexity.ai/search?q=lightpanda"
 picu logout --profile work
 ```
 
+skip per-site login entirely with your everyday profile:
+
+```bash
+picu --use-real-profile --renderer chrome "app behind your login"
+```
+
+this temp-copies session cookies plus DOM storage (never password
+stores, never the live dir) and renders as your logged-in self, so
+OAuth walls pass silently. requires quitting Chrome first since it
+owns its profile exclusively. cached separately under `chrome-real`.
+
 renderers: static (fast, no JS), lightpanda (cheap JS, cookies via
 --cookie), chrome (real Chromium + saved cookies and DOM storage — the
 one for signed-in SPAs, with desktop UA and no automation flag so bot

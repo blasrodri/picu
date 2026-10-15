@@ -240,6 +240,28 @@ func clearanceStatus(p *profile) (state string, hours float64) {
 	return clearanceForURL(p, "")
 }
 
+// borrowForFetch copies session-only state (cookies plus the DOM storage
+// SPAs keep auth tokens in) out of a real browser dir for one fetch. Login
+// Data and other password stores are never copied: a fetch only reads the
+// session, it never logs in. The copy is 0600 and removed by cleanup.
+func borrowForFetch(srcUserData string) (string, func(), error) {
+	tmp, err := os.MkdirTemp("", "picu-fetch-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tmp) }
+	n, err := copySessionTree(srcUserData, tmp)
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if n == 0 {
+		cleanup()
+		return "", nil, fmt.Errorf("no session files found in %s (is this a Chrome profile?)", srcUserData)
+	}
+	return tmp, cleanup, nil
+}
+
 func countForSite(cookies []storedCookie, site string) int {
 	u, err := url.Parse(site)
 	if err != nil {
