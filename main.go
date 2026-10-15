@@ -36,6 +36,7 @@ var (
 	countFlg    = flag.Int("count", 10, "results for picu search (0 keeps all)")
 	engineFlg   = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
 	doFlg       = flag.String("do", "", "browser actions: click|type|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
+	sessionFlg  = flag.String("session", "default", "named browser session for open/snap/act/close")
 	cacheTT     = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
 	timeout     = flag.Duration("timeout", 10*time.Second, "fetch timeout")
 )
@@ -96,6 +97,18 @@ func main() {
 			return
 		case "search":
 			runSearchCmd(flag.Args()[1:])
+			return
+		case "open":
+			runOpen(flag.Args()[1:], currentOpts())
+			return
+		case "snap":
+			runSnap(currentOpts())
+			return
+		case "act":
+			runAct(flag.Args()[1:], currentOpts())
+			return
+		case "close":
+			runClose()
 			return
 		}
 	}
@@ -654,7 +667,7 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true, "session": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading
