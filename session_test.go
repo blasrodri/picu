@@ -27,6 +27,12 @@ func TestFormatSnapshot(t *testing.T) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
 	}
+	// Selects surface their current choice as the name (snapshotJS reads
+	// the selected option), so agents can verify a select step committed.
+	out = formatSnapshot("https://x.test/", []snapEl{{Ref: 1, Role: "select", Name: "T10 (4378 paradas, 151 dias, 449.8 km)", Selector: "#fterr"}})
+	if !strings.Contains(out, `[1] select "T10 (4378 paradas, 151 dias, 449.8 km)" — #fterr`) {
+		t.Errorf("select choice missing:\n%s", out)
+	}
 }
 
 func TestResolveRef(t *testing.T) {

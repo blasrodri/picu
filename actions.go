@@ -21,7 +21,8 @@ const (
 
 // parseDo splits --do into steps on ';'. The first token after the verb is
 // always the selector (quote it when it holds spaces); the rest is the
-// verb's argument: free text for type, a duration or selector for wait,
+// verb's argument: free text for type, an option for select (index,
+// value, or visible-text prefix), a duration or selector for wait,
 // a key name for press. Quoting is shell-like, both quote kinds group.
 func parseDo(s string) ([]action, error) {
 	var out []action
@@ -41,7 +42,7 @@ func parseDo(s string) ([]action, error) {
 				return nil, fmt.Errorf("--do %q needs exactly a selector", part)
 			}
 			a.sel = toks[1]
-		case "type":
+		case "type", "select":
 			if len(toks) < 3 {
 				return nil, fmt.Errorf("--do %q needs a selector and text", part)
 			}
@@ -66,7 +67,7 @@ func parseDo(s string) ([]action, error) {
 				return nil, fmt.Errorf("--do %q takes no arguments", part)
 			}
 		default:
-			return nil, fmt.Errorf("--do unknown verb %q (click|type|wait|scroll|press|back)", toks[0])
+			return nil, fmt.Errorf("--do unknown verb %q (click|type|select|wait|scroll|press|back)", toks[0])
 		}
 		out = append(out, a)
 	}
@@ -157,7 +158,10 @@ func describe(a action) string {
 	}
 	switch a.verb {
 	case "type":
-		return "type " + q(a.sel) + " " + q(a.arg)
+		// Typed text can carry passwords and tokens: never log it.
+		return "type " + q(a.sel) + " ***"
+	case "select":
+		return "select " + q(a.sel) + " " + q(a.arg)
 	case "wait":
 		if a.sel != "" {
 			return "wait " + q(a.sel)
@@ -194,6 +198,30 @@ func runOne(eval func(string) (string, error), a action) (string, error) {
 		return need(eval(jsOK(a.sel,
 			`if('value' in el){el.value=`+strconv.Quote(a.arg)+`}else{el.textContent=`+strconv.Quote(a.arg)+`}`+
 				`el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return 'ok'`)))
+	case "select":
+		res, err := eval(`((sel,want)=>{const el=document.querySelector(sel);` +
+			`if(!el)return 'missing';if(el.tagName!=='SELECT')return 'not-select';let i=-1;` +
+			`if(/^\d+$/.test(want)){i=parseInt(want,10);if(i<0||i>=el.options.length)return 'no-option';}` +
+			`else{for(let k=0;k<el.options.length;k++){const o=el.options[k];if(o.value===want||o.text===want){i=k;break}}` +
+			`if(i<0){const lw=want.toLowerCase();for(let k=0;k<el.options.length;k++){if(el.options[k].text.toLowerCase().startsWith(lw)){i=k;break}}}` +
+			`if(i<0)return 'no-option';}` +
+			`el.selectedIndex=i;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));` +
+			`return 'selected:'+el.options[i].text})(` + strconv.Quote(a.sel) + `,` + strconv.Quote(a.arg) + `)`)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case res == "missing":
+			return "", fmt.Errorf("selector %q matched nothing", a.sel)
+		case res == "not-select":
+			return "", fmt.Errorf("selector %q is not a <select>", a.sel)
+		case res == "no-option":
+			return "", fmt.Errorf("selector %q has no option %q", a.sel, a.arg)
+		case strings.HasPrefix(res, "selected:"):
+			return res, nil
+		default:
+			return "", fmt.Errorf("select %q: unexpected result %q", a.sel, res)
+		}
 	case "scroll":
 		switch strings.ToLower(a.sel) {
 		case "bottom":

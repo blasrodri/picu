@@ -35,7 +35,7 @@ var (
 	jobs        = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
 	countFlg    = flag.Int("count", 10, "results for picu search (0 keeps all)")
 	engineFlg   = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
-	doFlg       = flag.String("do", "", "browser actions: click|type|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
+	doFlg       = flag.String("do", "", "browser actions: click|type|select|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
 	sessionFlg  = flag.String("session", "default", "named browser session for open/snap/act/close")
 	cacheTT     = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
 	timeout     = flag.Duration("timeout", 10*time.Second, "fetch timeout")

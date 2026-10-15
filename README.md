@@ -76,12 +76,14 @@ picu --profile g --renderer chrome --do "type #q hello; click #go; wait .results
 ```
 
 `--do` runs scripted steps in one Chrome session before the dump:
-`click`, `type`, `wait` (selector or duration), `scroll` (selector, top,
-bottom), `press` (Enter, Escape, Tab…), `back`. steps split on `;`, the
-first token after the verb is always the selector (quote it with
-spaces), each step logs to stderr, and a selector matching nothing
-fails the run. combine with `--profile` or `--use-real-profile` for
-login-then-act flows, and `--extract` for the resulting document.
+`click`, `type` (text never appears in logs), `select` (dropdown option
+by index, value, or visible-text prefix), `wait` (selector or duration),
+`scroll` (selector, top, bottom), `press` (Enter, Escape, Tab…), `back`.
+steps split on `;`, the first token after the verb is always the
+selector (quote it when it holds spaces), each step logs to stderr, and
+a selector matching nothing fails the run. combine with `--profile` or
+`--use-real-profile` for login-then-act flows, and `--extract` for the
+resulting document. snapshots show each dropdown's current choice.
 
 `--engine google` renders Google in headless Chrome behind the same
 output contract instead. Google consent-walls unknown sessions, so it
@@ -97,7 +99,7 @@ live check still open: run it once the limit lifts and compare.
 ```bash
 picu open --profile g example.com/form        # snapshot with [ref]s
 picu snap --session default                   # re-snapshot the live tab
-picu act --session default type 0 hello       # one step: click|type|wait|scroll|press|back
+picu act --session default type 0 hello       # one step: click|type|select|wait|scroll|press|back
 picu close --session default                  # close tab, drop session
 ```
 

@@ -79,7 +79,7 @@ type snapEl struct {
 // synthesized CSS selector each. Pure DOM read, no clicks.
 const snapshotJS = `(()=>{function css(e){if(e.id)return '#'+CSS.escape(e.id);const p=[];while(e&&e.nodeType===1&&p.length<6){let s=e.tagName.toLowerCase();const sib=e.parentNode?Array.from(e.parentNode.children).filter(c=>c.tagName===e.tagName):[];if(sib.length>1)s+=':nth-of-type('+(sib.indexOf(e)+1)+')';p.unshift(s);e=e.parentNode}return p.join(' > ')}
 const els=[];const seen=new Set();
-for(const el of document.querySelectorAll('a[href],button,input,select,textarea,[role=button],[role=link],[tabindex]')){if(els.length>=100)break;const r=el.getBoundingClientRect();if(r.width===0&&r.height===0)continue;const name=(el.innerText||el.value||el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.name||el.tagName).trim().replace(/\s+/g,' ').slice(0,80);const sel=css(el);if(seen.has(sel))continue;seen.add(sel);els.push({ref:els.length,role:(el.getAttribute('role')||el.tagName).toLowerCase(),name:name,selector:sel})}return JSON.stringify(els)})()`
+for(const el of document.querySelectorAll('a[href],button,input,select,textarea,[role=button],[role=link],[tabindex]')){if(els.length>=100)break;const r=el.getBoundingClientRect();if(r.width===0&&r.height===0)continue;const choice=el.tagName==='SELECT'?(el.options[el.selectedIndex]?el.options[el.selectedIndex].text:'') :'';const name=(choice||el.innerText||el.value||el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.name||el.tagName).trim().replace(/\s+/g,' ').slice(0,80);const sel=css(el);if(seen.has(sel))continue;seen.add(sel);els.push({ref:els.length,role:(el.getAttribute('role')||el.tagName).toLowerCase(),name:name,selector:sel})}return JSON.stringify(els)})()`
 
 func snapshotElements(eval func(string) (string, error)) ([]snapEl, error) {
 	raw, err := eval(snapshotJS)
@@ -233,6 +233,12 @@ func runOpen(args []string, o fetchOpts) {
 	defer cancelParent()
 	defer cancelAlloc()
 	defer cancelTask()
+	// The new tab starts at about:blank; wait for the navigation to land
+	// before snapshotting, otherwise open reports an empty page.
+	deadline := time.Now().Add(20 * time.Second)
+	for sessionURL(eval) == "about:blank" && time.Now().Before(deadline) {
+		time.Sleep(250 * time.Millisecond)
+	}
 	els, err := snapshotElements(eval)
 	if err != nil {
 		fatal(err.Error())
@@ -282,7 +288,7 @@ func runSnap(o fetchOpts) {
 // runAct implements `picu act [--session S] verb args…` (one step).
 func runAct(args []string, o fetchOpts) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: picu act [--session S] click|type|wait|scroll|press|back …")
+		fmt.Fprintln(os.Stderr, "usage: picu act [--session S] click|type|select|wait|scroll|press|back …")
 		os.Exit(2)
 	}
 	name := *sessionFlg
