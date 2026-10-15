@@ -16,22 +16,24 @@ import (
 )
 
 var (
-	_          = flag.Bool("md", true, "output markdown (default)")
-	tuiMode    = flag.Bool("tui", false, "interactive TUI viewer")
-	renderer   = flag.String("renderer", "auto", "fetch engine: auto|static|lightpanda")
-	profileFlg = flag.String("profile", "", "named cookie profile to send with the request")
-	cookieFile = flag.String("cookie-file", "", "cookie file to import (with: picu login)")
-	useReal    = flag.Bool("use-real-profile", false, "borrow your everyday Chrome profile (quit Chrome first)")
-	loginWait  = flag.Duration("login-timeout", 15*time.Second, "how long to wait for the login browser endpoint")
-	noAssist   = flag.Bool("no-assist", false, "never open a visible browser to solve bot walls")
-	settle     = flag.Duration("settle", 6*time.Second, "how long rendered text must hold still (streamed answers)")
-	selectFlg  = flag.String("select", "", "CSS selector: extract only the first matching element (needs JS renderer)")
-	schemaFile = flag.String("schema", "", "validate output JSON against schema FILE (or 'default'), retry once")
-	asJSON     = flag.Bool("json", false, "output schema-validated JSON")
-	budget     = flag.Int("budget", 8000, "token budget for markdown output")
-	jobs       = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
-	cacheTT    = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
-	timeout    = flag.Duration("timeout", 10*time.Second, "fetch timeout")
+	_           = flag.Bool("md", true, "output markdown (default)")
+	tuiMode     = flag.Bool("tui", false, "interactive TUI viewer")
+	renderer    = flag.String("renderer", "auto", "fetch engine: auto|static|lightpanda")
+	versionFlag = flag.Bool("version", false, "print version and exit")
+	profileFlg  = flag.String("profile", "", "named cookie profile to send with the request")
+	cookieFile  = flag.String("cookie-file", "", "cookie file to import (with: picu login)")
+	useReal     = flag.Bool("use-real-profile", false, "borrow your everyday Chrome profile (quit Chrome first)")
+	loginWait   = flag.Duration("login-timeout", 15*time.Second, "how long to wait for the login browser endpoint")
+	noAssist    = flag.Bool("no-assist", false, "never open a visible browser to solve bot walls")
+	settle      = flag.Duration("settle", 6*time.Second, "how long rendered text must hold still (streamed answers)")
+	selectFlg   = flag.String("select", "", "CSS selector: extract only the first matching element (needs JS renderer)")
+	extractFlg  = flag.String("extract", "", "extract subset: article|metadata (applies before budget)")
+	schemaFile  = flag.String("schema", "", "validate output JSON against schema FILE (or 'default'), retry once")
+	asJSON      = flag.Bool("json", false, "output schema-validated JSON")
+	budget      = flag.Int("budget", 8000, "token budget for markdown output")
+	jobs        = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
+	cacheTT     = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
+	timeout     = flag.Duration("timeout", 10*time.Second, "fetch timeout")
 )
 
 var (
@@ -48,6 +50,10 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	if *versionFlag {
+		fmt.Printf("picu %s\n", picuVersion)
+		return
+	}
 	if *tuiMode {
 		initial := ""
 		if flag.NArg() == 1 {
@@ -80,6 +86,9 @@ func main() {
 			return
 		case "logout":
 			runLogout()
+			return
+		case "doctor":
+			runDoctor()
 			return
 		}
 	}
@@ -162,6 +171,9 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 	if want != "static" && want != "lightpanda" && want != "chrome" && want != "auto" {
 		return "", "", false, "", fmt.Errorf("unknown --renderer %q (auto|static|lightpanda|chrome)", want)
 	}
+	if err := checkExtract(o.extract); err != nil {
+		return "", "", false, "", err
+	}
 	if want == "lightpanda" {
 		return renderViaLightpanda(url, o)
 	}
@@ -191,8 +203,9 @@ func get(url string, o fetchOpts) (md, title string, cached bool, via string, er
 				return "", "", false, "", err
 			}
 		} else {
-			md = toMarkdown(html)
-			if !isJSShell(html, md) {
+			full := toMarkdown(html)
+			md = applyExtract(html, full, o.extract)
+			if !isJSShell(html, full) {
 				title = "untitled"
 				if m := reTitle.FindStringSubmatch(html); len(m) == 2 {
 					title = strings.TrimSpace(reTags.ReplaceAllString(m[1], ""))
@@ -278,6 +291,7 @@ func renderViaLightpanda(url string, o fetchOpts) (md, title string, cached bool
 	if isChallengeMD(md) {
 		return "", "", false, "", fmt.Errorf("page stuck on bot verification (it may need an interactive solve)")
 	}
+	md = applyExtract(html, md, o.extract)
 	if o.cacheTTL > 0 {
 		saveCache(url, "lightpanda", md, title, o)
 	}
@@ -302,6 +316,7 @@ func renderViaChrome(url string, o fetchOpts) (md, title string, cached bool, vi
 	if isChallengeMD(md) {
 		return "", "", false, "", fmt.Errorf("page stuck on bot verification (it may need an interactive solve)")
 	}
+	md = applyExtract(html, md, o.extract)
 	if o.cacheTTL > 0 {
 		saveCache(url, "chrome", md, title, o)
 	}
@@ -311,7 +326,7 @@ func renderViaChrome(url string, o fetchOpts) (md, title string, cached bool, vi
 func staticFetch(url string, o fetchOpts) (html string, status int, err error) {
 	client := &http.Client{Timeout: o.timeout}
 	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "picu/0.1 (+agent-research)")
+	req.Header.Set("User-Agent", "picu/"+picuVersion+" (+agent-research)")
 	if o.profile != "" {
 		if p, err := loadProfile(o.profile); err != nil {
 			return "", 0, err
@@ -557,20 +572,20 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading
 // globals. Login/TUI chrome flags stay on the flag set directly.
 type fetchOpts struct {
-	renderer, profile, selector string
-	budget                      int
-	cacheTTL, timeout, settle   time.Duration
+	renderer, profile, selector, extract string
+	budget                               int
+	cacheTTL, timeout, settle            time.Duration
 }
 
 func currentOpts() fetchOpts {
 	return fetchOpts{
-		renderer: *renderer, profile: *profileFlg, selector: *selectFlg,
+		renderer: *renderer, profile: *profileFlg, selector: *selectFlg, extract: *extractFlg,
 		budget: *budget, cacheTTL: *cacheTT, timeout: *timeout, settle: *settle,
 	}
 }
@@ -609,10 +624,10 @@ func eqAbsent(a string) bool { return strings.Index(a, "=") < 0 }
 
 // cacheVersion bumps whenever the fetch/convert pipeline changes shape,
 // so old entries can never masquerade as fresh output.
-const cacheVersion = "v4"
+const cacheVersion = "v5"
 
 func cachePath(url, via string, o fetchOpts) string {
-	h := sha1.Sum([]byte(cacheVersion + "|" + via + "|" + o.selector + "|" + o.profile + "|" + url))
+	h := sha1.Sum([]byte(cacheVersion + "|" + via + "|" + o.selector + "|" + o.extract + "|" + o.profile + "|" + url))
 	dir, _ := os.UserCacheDir()
 	if dir == "" {
 		dir = os.TempDir()

@@ -4,7 +4,8 @@
 budget. `--json` returns schema-validated JSON for agents.
 
 ```bash
-go build -o picu .
+make install                                    # builds ./picu, copies to ~/.local/bin
+./picu doctor                                   # renderers, profiles, dirs — run this first
 ./picu ole.com.ar/article                      # bare domain, all defaults
 ./picu ole.com.ar/article --json --budget 500  # flags anywhere
 ./picu --renderer lightpanda example.com        # force JS rendering
@@ -59,11 +60,23 @@ markdown prints each doc under its header with failures on stderr;
 exit status is nonzero when any item failed. `--tui` takes at most
 one URL. tip: use `--jobs 1` if a host rate-limits shared-IP bursts.
 
+## agents
+
+`--json` returns one envelope per document: `url, title, markdown,
+chars, cached, renderer, profile` (batch: an array; failures become
+`{"url":…, "error":…}`). exit 0 means every item succeeded, 1 means at
+least one failed, 2 means bad flags. `--extract article` narrows output
+to main content, `--extract metadata` returns title/description/author
+lines. `picu doctor` reports what a fetch depends on, one fact per line.
+
 ## flags
 
-`--select CSS` scopes extraction (JS renderers), `--schema FILE` (or
-`default`) validates the output envelope and refetches once on failure,
-`--settle 2s` shortens the stream tail, `--budget` caps output tokens.
+`--select CSS` scopes extraction (JS renderers), `--extract
+article|metadata` narrows output before the budget applies, `--schema
+FILE` (or `default`) validates the output envelope and refetches once
+on failure, `--settle 2s` shortens the stream tail, `--budget` caps
+output tokens, `--jobs N` sizes the batch pool, `--version` prints the
+version, `doctor` checks the setup.
 
 ## gate
 

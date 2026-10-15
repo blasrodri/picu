@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chromedp/cdproto/network"
 )
 
 func TestNormalizeURL(t *testing.T) {
@@ -330,6 +332,27 @@ func TestAutoFallsThroughStaticBlock(t *testing.T) {
 	}
 	if !strings.Contains(md, "real answer content here") {
 		t.Errorf("wrong body: %q", md)
+	}
+}
+
+func TestStoredFromNetworkCookie(t *testing.T) {
+	got := storedFromNetworkCookie(&network.Cookie{
+		Name: "sess", Value: "abc", Domain: ".example.com",
+		Expires: 1790000000, HTTPOnly: true, Secure: true,
+		SameSite: network.CookieSameSite("Lax"),
+	})
+	if got.Name != "sess" || got.Value != "abc" || got.Domain != ".example.com" {
+		t.Errorf("identity lost: %+v", got)
+	}
+	if got.Expires != 1790000000 || !got.HttpOnly || !got.Secure || got.SameSite != "Lax" {
+		t.Errorf("attributes lost: %+v", got)
+	}
+	if got.Path != "/" {
+		t.Errorf("empty path should default to /, got %q", got.Path)
+	}
+	session := storedFromNetworkCookie(&network.Cookie{Name: "tmp", Path: "/a"})
+	if session.Expires != 0 {
+		t.Errorf("session cookie expiry should stay 0, got %v", session.Expires)
 	}
 }
 

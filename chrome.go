@@ -272,7 +272,64 @@ func renderHeadless(url, profileName, userDir string, overall time.Duration, o f
 	if isChallengeMD(toMarkdown(html)) {
 		return "", errBotStuck
 	}
+	if profileName != "" {
+		refreshJar(taskCtx, profileName)
+	}
 	return html, nil
+}
+
+// storedFromNetworkCookie converts a CDP cookie into profile form.
+func storedFromNetworkCookie(c *network.Cookie) storedCookie {
+	var exp float64
+	if c.Expires > 0 {
+		exp = float64(c.Expires)
+	}
+	path := c.Path
+	if path == "" {
+		path = "/"
+	}
+	return storedCookie{
+		Name: c.Name, Value: c.Value, Domain: c.Domain, Path: path,
+		Expires: exp, HttpOnly: c.HTTPOnly, Secure: c.Secure,
+		SameSite: string(c.SameSite),
+	}
+}
+
+// readJar pulls the page's live cookies out of the rendered session.
+func readJar(ctx context.Context) ([]storedCookie, error) {
+	res, err := chromedp.Call(ctx, storage.GetCookies, storage.GetCookiesParams{})
+	if err != nil {
+		return nil, err
+	}
+	var out []storedCookie
+	for _, c := range res.Cookies {
+		if c.Name == "" {
+			continue
+		}
+		out = append(out, storedFromNetworkCookie(c))
+	}
+	return out, nil
+}
+
+// refreshJar merges the page's live cookies back into the profile so the
+// next fast-path fetch (lightpanda, static) carries renewed clearance.
+func refreshJar(ctx context.Context, profileName string) {
+	fresh, err := readJar(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "note: cookie refresh: %v\n", err)
+		return
+	}
+	if len(fresh) == 0 {
+		return
+	}
+	p, err := loadProfile(profileName)
+	if err != nil {
+		return // render ran on session files alone; nothing to refresh
+	}
+	p.merge(fresh)
+	if err := saveProfile(p); err != nil {
+		fmt.Fprintf(os.Stderr, "note: cookie refresh: %v\n", err)
+	}
 }
 
 // chromeFetchHTML renders with headless system Chrome over the saved session
