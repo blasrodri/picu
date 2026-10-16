@@ -23,7 +23,7 @@ var (
 	versionFlag = flag.Bool("version", false, "print version and exit")
 	profileFlg  = flag.String("profile", "", "named cookie profile to send with the request")
 	cookieFile  = flag.String("cookie-file", "", "cookie file to import (with: picu login)")
-	useReal     = flag.Bool("use-real-profile", false, "fetch with your everyday Chrome profile: pages load with your real sessions, no per-site login (quit Chrome first)")
+	useReal     = flag.Bool("use-real-profile", false, "fetch with your everyday Chrome profile: pages load with your real sessions, no per-site login, no need to quit Chrome")
 	loginWait   = flag.Duration("login-timeout", 15*time.Second, "how long to wait for the login browser endpoint")
 	noAssist    = flag.Bool("no-assist", false, "never open a visible browser to solve bot walls")
 	settle      = flag.Duration("settle", 6*time.Second, "how long growing text must hold still (still text returns in under a second)")
@@ -377,9 +377,8 @@ func chromeHTML(url string, o fetchOpts) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("no everyday Chrome profile found (set PICU_CHROME_PROFILE to point at one)")
 		}
-		if chromeRunning() {
-			return "", fmt.Errorf("Chrome is running and owns its profile — quit Chrome completely, then rerun")
-		}
+		// Live copy with journal companions: safe while Chrome runs,
+		// so no quit is ever needed.
 		tmp, cleanup, err := borrowForFetch(realDir)
 		if err != nil {
 			return "", err

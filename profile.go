@@ -322,18 +322,17 @@ func runLogin(site string) {
 		fmt.Printf("profile %q: imported %d cookies from %s\n", *profileFlg, n, *cookieFile)
 		return
 	}
-	if site == "" {
-		fatal("give a site or a file: picu login --profile pplx perplexity.ai  OR  picu login --profile pplx --cookie-file cookies.txt")
-	}
 	if *useReal {
+		if site == "" {
+			// Zero-friction import: whole everyday store, Chrome keeps running.
+			importRealProfile(*profileFlg)
+			return
+		}
 		realDir, ok := realUserDataDir()
 		if !ok {
 			fatal("no everyday Chrome profile found (set PICU_CHROME_PROFILE to point at one)")
 		}
-		if chromeRunning() {
-			fatal("Chrome is running and owns its profile — quit Chrome completely, then rerun this command")
-		}
-		fmt.Printf("borrowing session from %s via temp copy (original untouched)\n", realDir)
+		fmt.Printf("borrowing session from %s via live temp copy (original untouched, no need to quit Chrome)\n", realDir)
 		tmp, cleanup, err := copyMinimalProfile(realDir)
 		if err != nil {
 			fatal(err.Error())
@@ -341,6 +340,9 @@ func runLogin(site string) {
 		defer cleanup()
 		runInteractiveLogin(site, *profileFlg, tmp, true)
 		return
+	}
+	if site == "" {
+		fatal("give a site or a file: picu login --profile pplx perplexity.ai  OR  picu login --profile pplx --cookie-file cookies.txt  OR  picu login --profile every --use-real-profile")
 	}
 	runInteractiveLogin(site, *profileFlg, filepath.Join(configDir(), "profiles", *profileFlg+".browser"), false)
 }

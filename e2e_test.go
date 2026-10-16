@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,10 @@ func fixtureMux() *http.ServeMux {
 	mux.HandleFunc("/private/x", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `<html><body><p>secret, robots-blocked.</p></body></html>`)
 	})
+	mux.HandleFunc("/setcookie", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "sid", Value: "e2e-live", Path: "/"})
+		fmt.Fprint(w, `<html><body><p>cookie set.</p></body></html>`)
+	})
 	return mux
 }
 
@@ -100,14 +105,7 @@ func chromeTestOpts(t *testing.T) fetchOpts {
 		t.Fatal(err)
 	}
 	t.Setenv("PICU_CONFIG_HOME", home)
-	t.Cleanup(func() {
-		for i := 0; i < 50; i++ {
-			if err := os.RemoveAll(home); err == nil {
-				return
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-	})
+	t.Cleanup(func() { removeAllRetry(home) })
 	wd, err := webdataDir("e2e")
 	if err != nil {
 		t.Fatal(err)
@@ -197,6 +195,17 @@ func snapNames(t *testing.T, eval func(string) (string, error)) []string {
 		out = append(out, e.Name)
 	}
 	return out
+}
+
+// removeAllRetry removes a browser-touched dir, retrying past the beat
+// Chrome holds files after its process exits.
+func removeAllRetry(dir string) {
+	for i := 0; i < 50; i++ {
+		if err := os.RemoveAll(dir); err == nil {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func containsName(names []string, want string) bool {
@@ -382,6 +391,114 @@ func TestE2ECrawlRobots(t *testing.T) {
 	}
 	if found {
 		t.Error("robots-blocked URL visited")
+	}
+}
+
+func TestCopySkipsLocalState(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	for _, f := range []string{"Default/Cookies", "Default/Preferences", "Local State"} {
+		p := src + "/" + f
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := copySessionTree(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dst + "/Default/Cookies"); err != nil {
+		t.Errorf("Cookies should be copied: %v", err)
+	}
+	if _, err := os.Stat(dst + "/Local State"); !os.IsNotExist(err) {
+		t.Error("Local State must not be copied: it poisons live-profile adoption")
+	}
+}
+
+func TestCopyWithJournals(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.WriteFile(src+"/Cookies", []byte("main"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src+"/Cookies-wal", []byte("wal-rows"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n, err := copyWithJournals(src+"/Cookies", dst+"/Cookies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(len("main") + len("wal-rows")); n != want {
+		t.Errorf("copied %d bytes, want %d", n, want)
+	}
+	for _, f := range []string{"/Cookies", "/Cookies-wal"} {
+		if _, err := os.Stat(dst + f); err != nil {
+			t.Errorf("companion missing: %s", f)
+		}
+	}
+}
+
+// TestE2ELiveImport proves the zero-friction path: a browser holds the
+// source dir open (never quit), a cookie lands in it, and the import
+// still captures that cookie into the named profile.
+func TestE2ELiveImport(t *testing.T) {
+	needRenderer(t, "chrome")
+	base := fixtureServer(t)
+	home, err := os.MkdirTemp("", "picu-e2e-home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICU_CONFIG_HOME", home)
+	t.Cleanup(func() { removeAllRetry(home) })
+	src, err := os.MkdirTemp("", "picu-e2e-src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { removeAllRetry(src) })
+	d, _, ok := daemonGet(src)
+	if !ok {
+		t.Fatal("could not start a source browser")
+	}
+	t.Cleanup(func() { daemonKill(src) })
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	allocCtx, cancelAlloc := remote.NewAllocator(ctx, d.WSURL)
+	defer cancelAlloc()
+	tmpCtx, cancelTmp := chromedp.NewContext(allocCtx)
+	_, cerr := chromedp.Call(tmpCtx, target.CreateTarget, target.CreateTargetParams{URL: base + "/setcookie"})
+	cancelTmp()
+	if cerr != nil {
+		t.Fatalf("visit setcookie: %v", cerr)
+	}
+	// Chrome flushes the cookie store to SQLite on its own cadence, so
+	// wait for the files the live copy needs before importing.
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		if _, err := os.Stat(src + "/Default/Cookies"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("source browser never wrote its cookie store")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	time.Sleep(2 * time.Second)
+	t.Setenv("PICU_CHROME_PROFILE", src)
+	importRealProfile("imp")
+	p, err := loadProfile("imp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range p.Cookies {
+		if c.Name == "sid" && c.Value == "e2e-live" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("imported %d cookies but not sid=e2e-live", len(p.Cookies))
 	}
 }
 

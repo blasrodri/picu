@@ -312,7 +312,7 @@ func searchGoogle(query string, count int, o fetchOpts) ([]searchResult, error) 
 		return nil, fmt.Errorf("google rate limit: automated requests from this network are blocked for now; wait it out (no session fixes this)")
 	}
 	if isGoogleConsent(md) {
-		return nil, fmt.Errorf("google consent wall: use --profile with an accepted session or --use-real-profile (quit Chrome first)")
+		return nil, fmt.Errorf("google consent wall: use --profile with an accepted session or --use-real-profile")
 	}
 	results := parseGoogle(html)
 	for i, r := range results {

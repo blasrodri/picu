@@ -67,19 +67,6 @@ func realUserDataDir() (string, bool) {
 	return "", false
 }
 
-// chromeRunning reports whether a Chrome process is alive. A running Chrome
-// owns its profile exclusively, so borrowing the real dir requires it to
-// be quit first.
-func chromeRunning() bool {
-	names := []string{"Google Chrome", "Chromium", "chrome", "chromium"}
-	for _, n := range names {
-		if err := exec.Command("pgrep", "-x", n).Run(); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
 func freePort() (int, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -198,40 +185,105 @@ func copyMinimalProfile(srcUserData string) (string, func(), error) {
 		return "", nil, err
 	}
 	var copied int64
-	cp := func(src, dst string) error {
-		b, err := os.ReadFile(src)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(dst, b, 0o600); err != nil {
-			return err
-		}
-		copied += int64(len(b))
-		return nil
-	}
 	for _, name := range minimalProfileFiles {
 		src := filepath.Join(srcUserData, "Default", name)
 		if _, err := os.Stat(src); err != nil {
 			continue
 		}
-		if err := cp(src, filepath.Join(dstDefault, name)); err != nil {
+		if n, err := copyWithJournals(src, filepath.Join(dstDefault, name)); err != nil {
 			cleanup()
 			return "", nil, err
+		} else {
+			copied += n
 		}
 	}
-	if b, err := os.ReadFile(filepath.Join(srcUserData, "Local State")); err == nil {
-		_ = os.WriteFile(filepath.Join(tmp, "Local State"), b, 0o600)
-		copied += int64(len(b))
-	}
+
 	if copied == 0 {
 		cleanup()
 		return "", nil, fmt.Errorf("no session files found in %s (is this a Chrome profile?)", srcUserData)
 	}
 	fmt.Fprintf(os.Stderr, "copied %.1f MB of session state to temp (original untouched)\n", float64(copied)/1048576)
 	return tmp, cleanup, nil
+}
+
+// importRealProfile copies the everyday profile WHILE Chrome runs, dumps
+// its full cookie store through a headless Chrome on the copy, and saves
+// both the jar and the session files. One command, no quitting, no
+// clicking: `picu login --profile NAME --use-real-profile`.
+//
+// Chrome flushes fresh cookies to SQLite on its own cadence (measured
+// ~35s), so the copy/dump cycle repeats on a fresh copy until cookies
+// appear or 90s pass. Everyday profiles hold long-flushed state and
+// import on the first cycle.
+func importRealProfile(profileName string) {
+	realDir, ok := realUserDataDir()
+	if !ok {
+		fatal("no everyday Chrome profile found (set PICU_CHROME_PROFILE to point at one)")
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	var cookies []storedCookie
+	var tmp string
+	var lastMB float64
+	for {
+		var err error
+		tmp, err = os.MkdirTemp("", "picu-import-*")
+		if err != nil {
+			fatal(err.Error())
+		}
+		var n int64
+		n, err = copySessionTree(realDir, tmp)
+		if err != nil {
+			os.RemoveAll(tmp)
+			fatal(fmt.Sprintf("copy live profile: %v", err))
+		}
+		if n == 0 {
+			os.RemoveAll(tmp)
+			fatal(fmt.Sprintf("no session files found in %s (is this a Chrome profile?)", realDir))
+		}
+		lastMB = float64(n) / 1048576
+		if cmd, port, lerr := launchChrome(true, tmp); lerr == nil {
+			cookies = dumpCookiesRetry(port)
+			_ = cmd.Process.Kill()
+		}
+		if len(cookies) > 0 {
+			break
+		}
+		os.RemoveAll(tmp)
+		tmp = ""
+		if time.Now().After(deadline) {
+			fatal("live profile yielded no cookies after 90s — browse logged-in anywhere first, then rerun")
+		}
+		time.Sleep(5 * time.Second)
+	}
+	fmt.Fprintf(os.Stderr, "copied %.1f MB of live session state to temp (original untouched, Chrome kept running)\n", lastMB)
+	p := &profile{Name: profileName}
+	if existing, err := loadProfile(profileName); err == nil {
+		p = existing
+	}
+	p.merge(cookies)
+	if err := saveProfile(p); err != nil {
+		os.RemoveAll(tmp)
+		fatal(err.Error())
+	}
+	fmt.Printf("profile %q: imported %d cookies from your everyday Chrome\n", profileName, len(cookies))
+	time.Sleep(time.Second)
+	if err := materializeWebdata(tmp, profileName); err != nil {
+		fmt.Fprintf(os.Stderr, "note: session-file snapshot failed (%v) — cookie jar still saved\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "session files saved for --renderer chrome\n")
+	}
+	os.RemoveAll(tmp)
+}
+
+// dumpCookiesRetry reads the store, tolerating a just-started browser.
+func dumpCookiesRetry(port int) []storedCookie {
+	for i := 0; i < 5; i++ {
+		if cookies, err := dumpCookies(port); err == nil {
+			return cookies
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return nil
 }
 
 // clearanceStatus reports Cloudflare clearance state in a profile jar:

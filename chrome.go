@@ -24,8 +24,13 @@ import (
 
 // sessionTree is copied for render-time reuse: cookies plus the DOM storage
 // (localStorage/sessionStorage) that SPAs keep their auth tokens in.
+// sessionTreeFiles is the session state copied for headless renders.
+// "Local State" is deliberately absent: a live browser's copy carries
+// machine/profile state that makes a fresh Chrome discard the cookie
+// store (measured: 807 cookies without it, 0 with it). Chrome
+// regenerates the file on launch.
 var sessionTreeFiles = []string{
-	"Cookies", "Cookies-journal", "Preferences", "Local State",
+	"Cookies", "Cookies-journal", "Preferences",
 	"Network/Cookies", "Network/Cookies-journal",
 }
 
@@ -67,11 +72,10 @@ func copySessionTree(srcUserData, dstRoot string) (int64, error) {
 		if name == "Local State" {
 			dst = filepath.Join(dstRoot, name)
 		}
-		if err := copyFile(src, dst); err != nil {
+		if n, err := copyWithJournals(src, dst); err != nil {
 			return copied, err
-		}
-		if st, err := os.Stat(dst); err == nil {
-			copied += st.Size()
+		} else {
+			copied += n
 		}
 	}
 	for _, dir := range sessionTreeDirs {
@@ -111,6 +115,30 @@ func materializeWebdata(srcUserData, profile string) error {
 		return fmt.Errorf("no session files in %s", srcUserData)
 	}
 	return nil
+}
+
+// copyWithJournals copies a file plus its SQLite companions (-wal,
+// -shm, -journal) when present. A live Chrome keeps the freshest rows
+// in the WAL, so a copy without them silently drops recent cookies —
+// this is what makes profile copies safe while Chrome is running.
+func copyWithJournals(src, dst string) (int64, error) {
+	var copied int64
+	for _, cand := range []string{src, src + "-wal", src + "-shm", src + "-journal"} {
+		if _, err := os.Stat(cand); err != nil {
+			continue
+		}
+		out := dst
+		if cand != src {
+			out = dst + cand[len(src):]
+		}
+		if err := copyFile(cand, out); err != nil {
+			return copied, err
+		}
+		if st, err := os.Stat(out); err == nil {
+			copied += st.Size()
+		}
+	}
+	return copied, nil
 }
 
 func boolPtr(b bool) *bool { return &b }

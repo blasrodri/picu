@@ -41,13 +41,20 @@ r refetch, b change url, ? help, q quit.
 ## profiles (auth walls)
 
 ```bash
+picu login --profile every --use-real-profile       # one command: your whole everyday store, Chrome keeps running
 picu login --profile pplx perplexity.ai              # fresh browser, you log in, Enter captures session
-picu login --profile pplx --use-real-profile perplexity.ai  # temp-copy real profile (quit Chrome first)
 picu login --profile work --cookie-file cookies.txt  # or import Netscape/CDP JSON
 picu profiles
-picu --profile pplx --renderer chrome "perplexity.ai/search?q=lightpanda"
+picu --profile every --renderer chrome "app behind your login"
 picu logout --profile work
 ```
+
+the import copies session cookies plus DOM storage off the live
+profile (SQLite journals included, so nothing freshly written is
+lost) and reads them through a headless Chrome on the copy — the
+original is never touched and Chrome never quits. password stores
+are never copied. fresh cookies flush on Chrome's own cadence, so
+the import re-copies until they appear (seconds, not minutes).
 
 skip per-site login entirely with your everyday profile:
 
@@ -57,8 +64,8 @@ picu --use-real-profile --renderer chrome "app behind your login"
 
 this temp-copies session cookies plus DOM storage (never password
 stores, never the live dir) and renders as your logged-in self, so
-OAuth walls pass silently. requires quitting Chrome first since it
-owns its profile exclusively. cached separately under `chrome-real`.
+OAuth walls pass silently. no need to quit Chrome. cached
+separately under `chrome-real`.
 
 renderers: static (fast, no JS), lightpanda (cheap JS, cookies via
 --cookie), chrome (real Chromium + saved cookies and DOM storage — the
