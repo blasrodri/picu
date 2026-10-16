@@ -88,9 +88,10 @@ func askFrame(jpg []byte, grounding, question string) (string, error) {
 	return strings.TrimSpace(out.Response), nil
 }
 
-// runSee implements `picu see --session S [--interval D] [question]`:
-// one key frame per tick, each answered by the local vision model.
-func runSee(o fetchOpts, interval time.Duration, loop bool, question string) {
+// runSee implements `picu see --session S [--interval D] [--plugin P]
+// [question]`: one key frame per tick, each answered by the local
+// vision model. Tab state for grounding comes from the plugin.
+func runSee(o fetchOpts, plugin string, interval time.Duration, loop bool, question string) {
 	name := *sessionFlg
 	s, err := loadSession(name)
 	if err != nil {
@@ -107,7 +108,7 @@ func runSee(o fetchOpts, interval time.Duration, loop bool, question string) {
 		question = defaultSeeQuestion
 	}
 	for {
-		if err := seeOnce(taskCtx, eval, s, question); err != nil {
+		if err := seeOnce(taskCtx, eval, s, plugin, question); err != nil {
 			fmt.Fprintf(os.Stderr, "see: %v — retrying\n", err)
 		}
 		if !loop {
@@ -120,12 +121,12 @@ func runSee(o fetchOpts, interval time.Duration, loop bool, question string) {
 	}
 }
 
-func seeOnce(taskCtx context.Context, eval func(string) (string, error), s *browserSession, question string) error {
-	raw, err := eval(whatnotStateJS)
+func seeOnce(taskCtx context.Context, eval func(string) (string, error), s *browserSession, plugin string, question string) error {
+	raw, err := eval(pluginJS(plugin, "state.js"))
 	if err != nil {
 		return err
 	}
-	var st watchState
+	var st map[string]any
 	if err := json.Unmarshal([]byte(raw), &st); err != nil {
 		return err
 	}
@@ -139,16 +140,14 @@ func seeOnce(taskCtx context.Context, eval func(string) (string, error), s *brow
 	if len(shot.Data) == 0 {
 		return fmt.Errorf("screenshot came back empty")
 	}
-	grounding := fmt.Sprintf("Live shopping tab state: seller %s, %s viewers, product %q, price %q, status %s, winner %q.",
-		st.Seller, st.Viewers, st.Product, st.Price, st.Status, st.Winner)
+	grounding := fmt.Sprintf("Live tab state: %s", raw)
 	answer, err := askFrame(shot.Data, grounding, question)
 	if err != nil {
 		return err
 	}
 	doc := map[string]any{
 		"ts": time.Now().UTC().Format(time.RFC3339), "session": s.Name,
-		"seller": st.Seller, "product": st.Product, "price": st.Price,
-		"status": st.Status, "frameBytes": len(shot.Data), "answer": answer,
+		"state": st, "frameBytes": len(shot.Data), "answer": answer,
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetEscapeHTML(false)

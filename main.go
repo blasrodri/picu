@@ -40,6 +40,7 @@ var (
 	engineFlg    = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
 	doFlg        = flag.String("do", "", "browser actions: click|type|select|read|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
 	sessionFlg   = flag.String("session", "default", "named browser session for open/snap/act/close/watch/bid")
+	pluginFlg    = flag.String("plugin", "whatnot", "site plugin for watch/bid/listen/see (plugins/<name>/*.js)")
 	followFlg    = flag.Bool("follow", false, "keep listening clip after clip (warmed model, near real time)")
 	watchEvery   = flag.Duration("interval", 15*time.Second, "poll interval for picu watch (5s minimum)")
 	depthFlg     = flag.Int("depth", 1, "crawl link hops beyond the seed (0 = seed only)")
@@ -142,7 +143,14 @@ func main() {
 			runClose()
 			return
 		case "watch":
-			runWatch(currentOpts(), *watchEvery)
+			runWatch(currentOpts(), *pluginFlg, *watchEvery)
+			return
+		case "eval":
+			if flag.NArg() != 2 {
+				fmt.Fprintln(os.Stderr, "usage: picu eval --session S 'JS' (print the raw result)")
+				os.Exit(2)
+			}
+			runEval(flag.Arg(1), currentOpts())
 			return
 		case "bid":
 			if flag.NArg() != 2 {
@@ -154,7 +162,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "usage: picu bid --session S MAX (MAX is a positive number)")
 				os.Exit(2)
 			}
-			runBid(currentOpts(), max)
+			runBid(currentOpts(), *pluginFlg, max)
 			return
 		case "listen":
 			secs := 15
@@ -169,7 +177,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "usage: picu listen --session S [seconds] [--follow]")
 				os.Exit(2)
 			}
-			runListen(currentOpts(), secs, *followFlg)
+			runListen(currentOpts(), *pluginFlg, secs, *followFlg)
 			return
 		case "see":
 			question := ""
@@ -179,7 +187,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "usage: picu see --session S [--interval D] [\"question\"]")
 				os.Exit(2)
 			}
-			runSee(currentOpts(), *watchEvery, flagPassed("interval"), question)
+			runSee(currentOpts(), *pluginFlg, *watchEvery, flagPassed("interval"), question)
 			return
 		case "crawl":
 			runCrawl(flag.Args()[1:], currentOpts())
@@ -785,7 +793,7 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true, "session": true, "depth": true, "pages": true, "proxy": true, "proxy-file": true, "interval": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true, "session": true, "depth": true, "pages": true, "proxy": true, "proxy-file": true, "interval": true, "plugin": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading

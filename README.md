@@ -164,6 +164,16 @@ status plus spoken prices and sold callouts, no model needed.
 `--follow` keeps one model resident and clips back-to-back for
 near-real-time coverage (clip length plus ~2s, not model load).
 
+## plugins (site knowledge out of core)
+
+core owns primitives: sessions, `dom`, `eval`, screenshot, audio tap,
+transcribe. everything naming a site lives in `plugins/<name>/*.js`:
+`state.js`, `tap.js`, `bid.js`, `parse.js` — each resolving to a JSON
+string. `watch`, `bid`, `listen`, `see` take `--plugin` (default
+whatnot); `PICU_PLUGIN_DIR` overrides the shipped files from disk so
+rules iterate without rebuilding. `eval` is the raw interface: any
+expression in the tab, raw result out.
+
 ## daemon (opt-in speed)
 
 `PICU_DAEMON=1` keeps one headless Chrome alive across runs, so repeat
