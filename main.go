@@ -37,6 +37,8 @@ var (
 	engineFlg   = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
 	doFlg       = flag.String("do", "", "browser actions: click|type|select|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
 	sessionFlg  = flag.String("session", "default", "named browser session for open/snap/act/close")
+	depthFlg    = flag.Int("depth", 1, "crawl link hops beyond the seed (0 = seed only)")
+	pagesFlg    = flag.Int("pages", 30, "crawl total page cap")
 	cacheTT     = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
 	timeout     = flag.Duration("timeout", 10*time.Second, "fetch timeout")
 )
@@ -109,6 +111,9 @@ func main() {
 			return
 		case "close":
 			runClose()
+			return
+		case "crawl":
+			runCrawl(flag.Args()[1:], currentOpts())
 			return
 		}
 	}
@@ -667,7 +672,7 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true, "session": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true, "session": true, "depth": true, "pages": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading

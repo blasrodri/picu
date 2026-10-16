@@ -133,6 +133,18 @@ markdown prints each doc under its header with failures on stderr;
 exit status is nonzero when any item failed. `--tui` takes at most
 one URL. tip: use `--jobs 1` if a host rate-limits shared-IP bursts.
 
+## crawl
+
+```bash
+./picu crawl example.com --depth 1 --pages 30 --json --cache 0
+```
+
+BFS from the seed in visit order: `--depth N` link hops beyond the
+seed (`0` = seed only), `--pages M` total cap, `--jobs N` workers per
+level. same host only, repeats and cycles skipped, each page carries
+its `depth` in JSON. politeness is on by default: one `robots.txt`
+per host, `Disallow` prefixes honored, missing file means allow-all.
+
 ## agents
 
 `--json` returns one envelope per document: `url, title, markdown,
