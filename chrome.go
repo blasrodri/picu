@@ -190,8 +190,11 @@ func chromeArgs(headless bool, userDataDir string, port int, proxy string) []str
 		"about:blank",
 	}
 	if headless {
-		args = append(args, "--headless=new", "--hide-scrollbars", "--mute-audio",
+		// No --mute-audio: headless has no speakers, and muting zeroes
+		// the media pipeline that session audio taps (listen) read.
+		args = append(args, "--headless=new", "--hide-scrollbars",
 			"--user-agent="+desktopUA(),
+			"--autoplay-policy=no-user-gesture-required",
 			"--disable-blink-features=AutomationControlled")
 	}
 	if proxy != "" {

@@ -68,8 +68,31 @@ let status = 'off';
 if (/auction hasn't started/i.test(foot)) status = 'pre';
 else if (canBid) status = 'live';
 else if (winner) status = 'sold';
+let streamUrl = '';
+try {
+  const entries = performance.getEntriesByType('resource') || [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const u = entries[i].name || '';
+    if (/\.(m3u8|mpd)(\?|$)/.test(u)) { streamUrl = u.slice(0, 500); break; }
+  }
+  if (!streamUrl) {
+    // No playlist in the buffer (MSE players, eviction, or WebRTC):
+    // report how many subresource fetches look like media segments.
+    let seg = 0;
+    for (let i = 0; i < entries.length; i++) {
+      const u = entries[i].name || '';
+      if (/\.(ts|m4s|mp4)(\?|$)/.test(u)) seg++;
+    }
+    if (seg > 0) streamUrl = 'segments:' + seg;
+  }
+  if (!streamUrl) {
+    const vid = document.querySelector('video');
+    const vsrc = vid ? (vid.currentSrc || vid.src || '') : '';
+    if (vsrc) streamUrl = 'video:' + vsrc.slice(0, 300);
+  }
+} catch (e) {}
 return JSON.stringify({seller, viewers, product: foot.slice(0, 300),
-  price: bidPrice, canBid, status, winner, chat});
+  price: bidPrice, canBid, status, winner, chat, streamUrl});
 })()`
 
 type watchState struct {
@@ -81,6 +104,7 @@ type watchState struct {
 	Status  string   `json:"status"`
 	Winner  string   `json:"winner"`
 	Chat    []string `json:"chat"`
+	Stream  string   `json:"streamUrl"`
 }
 
 func (w watchState) key() string {
@@ -130,7 +154,7 @@ func runWatch(o fetchOpts, interval time.Duration) {
 				"ts": time.Now().UTC().Format(time.RFC3339), "url": sessionURL(eval),
 				"seller": st.Seller, "viewers": st.Viewers, "product": st.Product,
 				"price": st.Price, "canBid": st.CanBid, "status": st.Status, "winner": st.Winner,
-				"chat": st.Chat,
+				"chat": st.Chat, "streamUrl": st.Stream,
 			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetEscapeHTML(false)

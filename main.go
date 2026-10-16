@@ -155,6 +155,21 @@ func main() {
 			}
 			runBid(currentOpts(), max)
 			return
+		case "listen":
+			secs := 15
+			if flag.NArg() == 2 {
+				var perr error
+				secs, perr = strconv.Atoi(flag.Arg(1))
+				if perr != nil || secs <= 0 {
+					fmt.Fprintln(os.Stderr, "usage: picu listen --session S [--seconds N]")
+					os.Exit(2)
+				}
+			} else if flag.NArg() > 2 {
+				fmt.Fprintln(os.Stderr, "usage: picu listen --session S [--seconds N]")
+				os.Exit(2)
+			}
+			runListen(currentOpts(), secs)
+			return
 		case "see":
 			question := ""
 			if flag.NArg() == 2 {

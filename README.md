@@ -128,6 +128,7 @@ picu act --session default click 1 --json     # {"url":…, "results":[…], "el
 picu watch --session default --interval 10s   # live-show feed: one JSON line per state change
 picu bid --session default 150                # one explicit bid at or under 150, never auto-confirms
 picu see --session default                    # key frame + chat state to local vision model, text answer back
+picu listen --session default 15              # 15s of seller audio, transcribed locally, JSON segments back
 picu dom --session default SELECTOR           # outerHTML of matches, for mapping pages snapshots can't describe
 picu sessions                                 # named sessions on disk
 picu close --session default                  # close tab, drop session
@@ -152,6 +153,11 @@ confirms purchases. `see` captures one key frame per tick and asks the
 local vision model (`PICU_VISION_MODEL`, default gemma3:4b via
 `PICU_OLLAMA_URL`) what is being auctioned; the frame never leaves the
 machine. model, browser, and stream all run locally.
+`listen` taps the show's audio track in-page (Agora WebRTC has no
+playlist to download: the SDK's live audio track feeds our own graph)
+and transcribes it with local faster-whisper
+(`~/.local/share/picu/stt`), so seller speech joins the feed as
+timestamped segments in the detected language.
 
 ## daemon (opt-in speed)
 
