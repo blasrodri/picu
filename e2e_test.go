@@ -91,9 +91,23 @@ func staticOpts() fetchOpts {
 
 // chromeTestOpts materializes an empty snapshot profile under a temp
 // config home so chrome-renderer tests never touch real profiles.
+// Chrome releases profile files a beat after its process exits, so
+// cleanup retries instead of racing the shutdown.
 func chromeTestOpts(t *testing.T) fetchOpts {
 	t.Helper()
-	t.Setenv("PICU_CONFIG_HOME", t.TempDir())
+	home, err := os.MkdirTemp("", "picu-e2e-home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICU_CONFIG_HOME", home)
+	t.Cleanup(func() {
+		for i := 0; i < 50; i++ {
+			if err := os.RemoveAll(home); err == nil {
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	})
 	wd, err := webdataDir("e2e")
 	if err != nil {
 		t.Fatal(err)
