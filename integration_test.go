@@ -72,7 +72,9 @@ func TestLiveBatchOrderAndEnvelopes(t *testing.T) {
 func TestLiveCrawlDepth(t *testing.T) {
 	requireLive(t)
 	items := crawl("https://example.com", liveOpts(), crawlOpts{depth: 1, pages: 10}, 2, get,
-		func(host string) []string { return robotsFor(host, robotsGetter) })
+		func(host string) []string {
+			return robotsFor(host, func(t string) (string, error) { return robotsGetter(t, "") })
+		})
 	if len(items) != 1 {
 		t.Fatalf("visited %d pages, want exactly the seed", len(items))
 	}

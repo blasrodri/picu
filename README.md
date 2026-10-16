@@ -174,6 +174,26 @@ level. same host only, repeats and cycles skipped, each page carries
 its `depth` in JSON. politeness is on by default: one `robots.txt`
 per host, `Disallow` prefixes honored, missing file means allow-all.
 
+## proxy
+
+```bash
+./picu --proxy http://127.0.0.1:8080 example.com --cache 0
+./picu --proxy-file proxies.txt example.com --cache 0      # host:port:user:pass or URL per line
+./picu --proxy-file https://provider/.../list.txt crawl example.com --depth 1
+```
+
+`--proxy` (http/https only) routes static, lightpanda, robots, and
+chrome fetches through the proxy; without it the standard
+`HTTP_PROXY`/`HTTPS_PROXY` env still applies to plain fetches.
+localhost and loopback always bypass. `--proxy-file` takes a local
+file or a provider download URL and rotates one proxy per fetch
+(batch and crawl spread automatically); an explicit `--proxy` wins
+for a single fetch. proxy URLs carry credentials, so they never
+appear in output or logs — only the pool size on stderr. chrome
+renders get a cold proxied launch on a temp session copy (auth
+preserved through jar injection) — profile daemons, session tabs,
+and interactive login stay direct. cache keys include the proxy URL.
+
 ## agents
 
 `--json` returns one envelope per document: `url, title, markdown,

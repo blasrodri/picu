@@ -92,9 +92,10 @@ func robotsFor(host string, get func(string) (string, error)) []string {
 	return out
 }
 
-// robotsGetter fetches one robots.txt over the shared client, short
-// timeout, small body cap: politeness metadata, never page content.
-func robotsGetter(target string) (string, error) {
+// robotsGetter fetches one robots.txt, short timeout, small body cap:
+// politeness metadata, never page content. It rides --proxy like any
+// other fetch so crawls behind a proxy stay consistent.
+func robotsGetter(target, proxy string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
@@ -102,7 +103,7 @@ func robotsGetter(target string) (string, error) {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "picu/0.1")
-	resp, err := sharedHTTPClient.Do(req)
+	resp, err := httpClientFor(proxy).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -197,7 +198,7 @@ func runCrawl(raw []string, opts fetchOpts) {
 	}
 	seed := normalizeURL(raw[0])
 	items := crawl(seed, opts, crawlOpts{depth: *depthFlg, pages: *pagesFlg}, *jobs, get, func(host string) []string {
-		return robotsFor(host, robotsGetter)
+		return robotsFor(host, func(t string) (string, error) { return robotsGetter(t, opts.proxy) })
 	})
 	if *asJSON {
 		arr := make([]map[string]any, len(items))

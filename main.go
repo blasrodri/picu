@@ -9,38 +9,42 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
 var (
-	_           = flag.Bool("md", true, "output markdown (default)")
-	tuiMode     = flag.Bool("tui", false, "interactive TUI viewer")
-	renderer    = flag.String("renderer", "auto", "fetch engine: auto|static|lightpanda")
-	versionFlag = flag.Bool("version", false, "print version and exit")
-	profileFlg  = flag.String("profile", "", "named cookie profile to send with the request")
-	cookieFile  = flag.String("cookie-file", "", "cookie file to import (with: picu login)")
-	useReal     = flag.Bool("use-real-profile", false, "fetch with your everyday Chrome profile: pages load with your real sessions, no per-site login, no need to quit Chrome")
-	loginWait   = flag.Duration("login-timeout", 15*time.Second, "how long to wait for the login browser endpoint")
-	noAssist    = flag.Bool("no-assist", false, "never open a visible browser to solve bot walls")
-	settle      = flag.Duration("settle", 6*time.Second, "how long growing text must hold still (still text returns in under a second)")
-	selectFlg   = flag.String("select", "", "CSS selector: extract only the first matching element (needs JS renderer)")
-	extractFlg  = flag.String("extract", "", "extract subset: article|metadata (applies before budget)")
-	schemaFile  = flag.String("schema", "", "validate output JSON against schema FILE (or 'default'), retry once")
-	asJSON      = flag.Bool("json", false, "output schema-validated JSON")
-	budget      = flag.Int("budget", 8000, "token budget for markdown output")
-	jobs        = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
-	countFlg    = flag.Int("count", 10, "results for picu search (0 keeps all)")
-	engineFlg   = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
-	doFlg       = flag.String("do", "", "browser actions: click|type|select|read|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
-	sessionFlg  = flag.String("session", "default", "named browser session for open/snap/act/close")
-	depthFlg    = flag.Int("depth", 1, "crawl link hops beyond the seed (0 = seed only)")
-	pagesFlg    = flag.Int("pages", 30, "crawl total page cap")
-	cacheTT     = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
-	timeout     = flag.Duration("timeout", 10*time.Second, "fetch timeout")
+	_            = flag.Bool("md", true, "output markdown (default)")
+	tuiMode      = flag.Bool("tui", false, "interactive TUI viewer")
+	renderer     = flag.String("renderer", "auto", "fetch engine: auto|static|lightpanda")
+	versionFlag  = flag.Bool("version", false, "print version and exit")
+	profileFlg   = flag.String("profile", "", "named cookie profile to send with the request")
+	cookieFile   = flag.String("cookie-file", "", "cookie file to import (with: picu login)")
+	useReal      = flag.Bool("use-real-profile", false, "fetch with your everyday Chrome profile: pages load with your real sessions, no per-site login, no need to quit Chrome")
+	loginWait    = flag.Duration("login-timeout", 15*time.Second, "how long to wait for the login browser endpoint")
+	noAssist     = flag.Bool("no-assist", false, "never open a visible browser to solve bot walls")
+	settle       = flag.Duration("settle", 6*time.Second, "how long growing text must hold still (still text returns in under a second)")
+	selectFlg    = flag.String("select", "", "CSS selector: extract only the first matching element (needs JS renderer)")
+	extractFlg   = flag.String("extract", "", "extract subset: article|metadata (applies before budget)")
+	schemaFile   = flag.String("schema", "", "validate output JSON against schema FILE (or 'default'), retry once")
+	asJSON       = flag.Bool("json", false, "output schema-validated JSON")
+	budget       = flag.Int("budget", 8000, "token budget for markdown output")
+	jobs         = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
+	countFlg     = flag.Int("count", 10, "results for picu search (0 keeps all)")
+	engineFlg    = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
+	doFlg        = flag.String("do", "", "browser actions: click|type|select|read|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
+	sessionFlg   = flag.String("session", "default", "named browser session for open/snap/act/close")
+	depthFlg     = flag.Int("depth", 1, "crawl link hops beyond the seed (0 = seed only)")
+	pagesFlg     = flag.Int("pages", 30, "crawl total page cap")
+	proxyFlg     = flag.String("proxy", "", "proxy URL for fetches (http/https only), e.g. http://127.0.0.1:8080")
+	proxyFileFlg = flag.String("proxy-file", "", "proxy list file (host:port:user:pass or URL per line) or download URL; rotates per fetch")
+	cacheTT      = flag.Duration("cache", 24*time.Hour, "cache TTL (0 disables)")
+	timeout      = flag.Duration("timeout", 10*time.Second, "fetch timeout")
 )
 
 var (
@@ -57,6 +61,21 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	if *proxyFlg != "" {
+		if _, err := parseProxyURL(*proxyFlg); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(2)
+		}
+	}
+	if *proxyFileFlg != "" {
+		urls, err := loadProxySource(*proxyFileFlg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(2)
+		}
+		proxyPool.urls = urls
+		fmt.Fprintf(os.Stderr, "proxy pool: %d proxies, rotating per fetch\n", len(urls))
+	}
 	if *versionFlag {
 		fmt.Printf("picu %s\n", picuVersion)
 		return
@@ -195,6 +214,16 @@ func checkDoc(doc map[string]any) []string {
 }
 
 func get(url string, o fetchOpts) (md, title string, cached bool, via string, err error) {
+	if o.proxy == "" {
+		// Rotation happens here so every fetch path — single, batch,
+		// crawl — spreads across the pool; an explicit --proxy wins.
+		o.proxy = nextPoolProxy()
+	}
+	if o.proxy != "" {
+		if _, err := parseProxyURL(o.proxy); err != nil {
+			return "", "", false, "", err
+		}
+	}
 	want := o.renderer
 	if want != "static" && want != "lightpanda" && want != "chrome" && want != "auto" {
 		return "", "", false, "", fmt.Errorf("unknown --renderer %q (auto|static|lightpanda|chrome)", want)
@@ -420,6 +449,38 @@ func renderViaBorrowed(url string, o fetchOpts) (md, title string, cached bool, 
 // budget; a fresh client per fetch would redo TLS on every URL.
 var sharedHTTPClient = &http.Client{}
 
+var proxyClients = struct {
+	sync.Mutex
+	m map[string]*http.Client
+}{m: map[string]*http.Client{}}
+
+// httpClientFor returns the shared client normally, or a cached client
+// pinned to --proxy. Empty proxy keeps default env behavior
+// (HTTP_PROXY/HTTPS_PROXY honored by the standard transport).
+func httpClientFor(proxy string) *http.Client {
+	if proxy == "" {
+		return sharedHTTPClient
+	}
+	proxyClients.Lock()
+	defer proxyClients.Unlock()
+	if c, ok := proxyClients.m[proxy]; ok {
+		return c
+	}
+	u, err := parseProxyURL(proxy)
+	if err != nil {
+		return sharedHTTPClient
+	}
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		base = &http.Transport{}
+	}
+	tx := base.Clone()
+	tx.Proxy = http.ProxyURL(u)
+	c := &http.Client{Transport: tx}
+	proxyClients.m[proxy] = c
+	return c
+}
+
 func staticFetch(url string, o fetchOpts) (html string, status int, err error) {
 	ctx := context.Background()
 	if o.timeout > 0 {
@@ -436,7 +497,7 @@ func staticFetch(url string, o fetchOpts) (html string, status int, err error) {
 			req.Header.Set("Cookie", hdr)
 		}
 	}
-	resp, err := sharedHTTPClient.Do(req)
+	resp, err := httpClientFor(o.proxy).Do(req)
 	if err != nil {
 		return "", 0, err
 	}
@@ -674,13 +735,14 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true, "session": true, "depth": true, "pages": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true, "session": true, "depth": true, "pages": true, "proxy": true, "proxy-file": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading
 // globals. Login/TUI chrome flags stay on the flag set directly.
 type fetchOpts struct {
 	renderer, profile, selector, extract, do string
+	proxy                                    string
 	budget                                   int
 	cacheTTL, timeout, settle                time.Duration
 }
@@ -688,8 +750,114 @@ type fetchOpts struct {
 func currentOpts() fetchOpts {
 	return fetchOpts{
 		renderer: *renderer, profile: *profileFlg, selector: *selectFlg, extract: *extractFlg, do: *doFlg,
+		proxy:  *proxyFlg,
 		budget: *budget, cacheTTL: *cacheTT, timeout: *timeout, settle: *settle,
 	}
+}
+
+// proxyPool holds --proxy-file URLs for round-robin rotation: each
+// fetch takes the next proxy, spreading load and shared-IP risk.
+var proxyPool = struct {
+	sync.Mutex
+	urls []string
+	next int
+}{}
+
+// loadProxyList parses list lines: full http(s) URLs as-is, or
+// host:port[:user:pass] shorthand (CRLF tolerated, # comments and
+// blanks skipped). Shorthand means plain HTTP proxy.
+func loadProxyList(body string) ([]string, error) {
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.Contains(line, "://") {
+			if _, err := parseProxyURL(line); err != nil {
+				return nil, err
+			}
+			out = append(out, line)
+			continue
+		}
+		parts := strings.Split(line, ":")
+		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("bad proxy line %q: want host:port[:user:pass] or a URL", line)
+		}
+		u := "http://" + parts[0] + ":" + parts[1]
+		if len(parts) >= 4 {
+			u = "http://" + parts[2] + ":" + parts[3] + "@" + parts[0] + ":" + parts[1]
+		} else if len(parts) == 3 {
+			return nil, fmt.Errorf("bad proxy line %q: want host:port[:user:pass] or a URL", line)
+		}
+		if _, err := parseProxyURL(u); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("proxy list is empty")
+	}
+	return out, nil
+}
+
+// loadProxySource reads a list file, or downloads it when the source
+// looks like a URL (provider download links refresh the list).
+func loadProxySource(src string) ([]string, error) {
+	body := src
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, "GET", src, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := sharedHTTPClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("download proxy list: %v", err)
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			return nil, err
+		}
+		body = string(b)
+	} else {
+		b, err := os.ReadFile(src)
+		if err != nil {
+			return nil, err
+		}
+		body = string(b)
+	}
+	return loadProxyList(body)
+}
+
+// nextPoolProxy returns the next rotating proxy, or "" when no pool.
+func nextPoolProxy() string {
+	proxyPool.Lock()
+	defer proxyPool.Unlock()
+	if len(proxyPool.urls) == 0 {
+		return ""
+	}
+	u := proxyPool.urls[proxyPool.next%len(proxyPool.urls)]
+	proxyPool.next++
+	return u
+}
+
+// parseProxyURL validates a --proxy value: http/https only (no SOCKS
+// without a new dependency), host required.
+func parseProxyURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("bad --proxy %q: %v", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("bad --proxy %q: scheme must be http or https", raw)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("bad --proxy %q: missing host", raw)
+	}
+	return u, nil
 }
 
 // reorderArgs moves flags before positionals so `web example.com --json`
@@ -729,7 +897,7 @@ func eqAbsent(a string) bool { return strings.Index(a, "=") < 0 }
 const cacheVersion = "v5"
 
 func cachePath(url, via string, o fetchOpts) string {
-	h := sha1.Sum([]byte(cacheVersion + "|" + via + "|" + o.selector + "|" + o.extract + "|" + o.profile + "|" + url))
+	h := sha1.Sum([]byte(cacheVersion + "|" + via + "|" + o.selector + "|" + o.extract + "|" + o.profile + "|" + o.proxy + "|" + url))
 	dir, _ := os.UserCacheDir()
 	if dir == "" {
 		dir = os.TempDir()

@@ -170,7 +170,7 @@ func desktopUA() string {
 
 // chromeArgs builds the launch flags shared by cold starts, the daemon,
 // and the visible assist browser so every Chrome picu runs behaves alike.
-func chromeArgs(headless bool, userDataDir string, port int) []string {
+func chromeArgs(headless bool, userDataDir string, port int, proxy string) []string {
 	args := []string{
 		fmt.Sprintf("--user-data-dir=%s", userDataDir),
 		fmt.Sprintf("--remote-debugging-port=%d", port),
@@ -182,10 +182,15 @@ func chromeArgs(headless bool, userDataDir string, port int) []string {
 			"--user-agent="+desktopUA(),
 			"--disable-blink-features=AutomationControlled")
 	}
+	if proxy != "" {
+		// Loopback always bypasses: CDP-adjacent local fetches and
+		// fixture servers must never route through the proxy.
+		args = append(args, "--proxy-server="+proxy, "--proxy-bypass-list=<-loopback>")
+	}
 	return args
 }
 
-func launchChrome(headless bool, userDataDir string) (*exec.Cmd, int, error) {
+func launchChrome(headless bool, userDataDir string, proxy string) (*exec.Cmd, int, error) {
 	chrome, ok := findSystemChrome()
 	if !ok {
 		return nil, 0, fmt.Errorf("no system Chrome found (set PICU_CHROME_BIN)")
@@ -194,7 +199,7 @@ func launchChrome(headless bool, userDataDir string) (*exec.Cmd, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	cmd := exec.Command(chrome, chromeArgs(headless, userDataDir, port)...)
+	cmd := exec.Command(chrome, chromeArgs(headless, userDataDir, port, proxy)...)
 	var errLog strings.Builder
 	cmd.Stdout, cmd.Stderr = nil, &errLog
 	if err := cmd.Start(); err != nil {
@@ -259,7 +264,7 @@ var chromePool = struct {
 }{m: map[string]*sharedChrome{}}
 
 func startSharedChrome(userDir string) (*sharedChrome, error) {
-	cmd, port, err := launchChrome(true, userDir)
+	cmd, port, err := launchChrome(true, userDir, "")
 	if err != nil {
 		return nil, err
 	}
@@ -322,9 +327,50 @@ func evictChrome(userDir string) {
 	}
 }
 
+// proxiedDir stages a temp profile for a cold proxied launch: a copy of
+// the session files when the profile has them (auth preserved through
+// the proxy), otherwise a fresh dir. The caller removes it.
+func proxiedDir(userDir string) (string, func(), error) {
+	tmp, err := os.MkdirTemp("", "picu-proxy-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tmp) }
+	if userDir != "" {
+		// Best effort: without session files the render still proceeds
+		// on jar injection, so a bare profile never fails the copy.
+		if _, err := copySessionTree(userDir, tmp); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+	}
+	return tmp, cleanup, nil
+}
+
 func renderHeadless(url, profileName, userDir string, overall time.Duration, o fetchOpts, useDaemon bool) (string, error) {
 	wsURL := ""
-	if useDaemon && daemonEnabled() {
+	if o.proxy != "" {
+		// Proxied renders never ride the profile daemon or pool: those
+		// browsers are long-lived and direct. Cold-launch on a temp
+		// session copy (or a fresh dir) with proxy flags instead.
+		tmp, cleanup, perr := proxiedDir(userDir)
+		if perr != nil {
+			return "", perr
+		}
+		defer cleanup()
+		cmd, port, lerr := launchChrome(true, tmp, o.proxy)
+		if lerr != nil {
+			return "", lerr
+		}
+		defer func() { _ = cmd.Process.Kill() }()
+		w, derr := debuggerURL(port)
+		if derr != nil {
+			return "", derr
+		}
+		fmt.Fprintf(os.Stderr, "chrome: cold proxied launch (%s)\n", o.proxy)
+		wsURL = w
+	}
+	if wsURL == "" && useDaemon && daemonEnabled() {
 		if d, fresh, ok := daemonGet(userDir); ok {
 			wsURL = d.WSURL
 			if fresh {
@@ -565,7 +611,7 @@ func assistedSolve(url, profileName string) error {
 	if err != nil {
 		return err
 	}
-	cmd, port, err := launchChrome(false, wd)
+	cmd, port, err := launchChrome(false, wd, "")
 	if err != nil {
 		return err
 	}

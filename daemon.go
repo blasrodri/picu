@@ -128,7 +128,7 @@ func daemonSpawn(userDir string) (daemonInfo, bool) {
 	if err != nil {
 		return zero, false
 	}
-	cmd := exec.Command(chrome, chromeArgs(true, userDir, port)...)
+	cmd := exec.Command(chrome, chromeArgs(true, userDir, port, "")...)
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		return zero, false

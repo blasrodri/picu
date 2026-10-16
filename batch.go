@@ -35,6 +35,13 @@ func fetchOne(url string, opts fetchOpts, fn fetchFunc) (map[string]any, error) 
 			"profile": opts.profile,
 		}
 	}
+	if opts.proxy == "" {
+		// Pool rotation lives here (and in get for direct single
+		// fetches): each item takes the next proxy. Explicit --proxy
+		// wins; proxy URLs never enter the output envelope — they
+		// carry credentials.
+		opts.proxy = nextPoolProxy()
+	}
 	md, title, cached, via, err := fn(url, opts)
 	if err != nil {
 		return nil, err

@@ -65,6 +65,13 @@ func lightpandaFetchHTML(url string, maxBytes int, timeout time.Duration, o fetc
 		args = append(args, "--cookie", cookieTmp.Name(), "--cookie-jar", jar)
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
+	if o.proxy != "" {
+		// The sidecar honors the standard proxy env, so pin it there
+		// without touching the user's environment.
+		cmd.Env = append(os.Environ(),
+			"HTTP_PROXY="+o.proxy, "HTTPS_PROXY="+o.proxy,
+			"NO_PROXY=localhost,127.0.0.1,::1")
+	}
 	var out, errBuf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errBuf
 	if err := cmd.Run(); err != nil {

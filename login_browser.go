@@ -241,7 +241,7 @@ func importRealProfile(profileName string) {
 			fatal(fmt.Sprintf("no session files found in %s (is this a Chrome profile?)", realDir))
 		}
 		lastMB = float64(n) / 1048576
-		if cmd, port, lerr := launchChrome(true, tmp); lerr == nil {
+		if cmd, port, lerr := launchChrome(true, tmp, ""); lerr == nil {
 			cookies = dumpCookiesRetry(port)
 			_ = cmd.Process.Kill()
 		}
@@ -265,7 +265,7 @@ func importRealProfile(profileName string) {
 		os.RemoveAll(tmp)
 		fatal(err.Error())
 	}
-	fmt.Printf("profile %q: imported %d cookies from your everyday Chrome\n", profileName, len(cookies))
+	fmt.Printf("profile %q: imported %d cookies from %s\n", profileName, len(cookies), realDir)
 	time.Sleep(time.Second)
 	if err := materializeWebdata(tmp, profileName); err != nil {
 		fmt.Fprintf(os.Stderr, "note: session-file snapshot failed (%v) — cookie jar still saved\n", err)

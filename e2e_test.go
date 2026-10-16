@@ -143,7 +143,11 @@ func needRenderer(t *testing.T, name string) {
 func browserEval(t *testing.T, page string) (func(string) (string, error), func()) {
 	t.Helper()
 	needRenderer(t, "chrome")
-	wd := t.TempDir()
+	wd, err := os.MkdirTemp("", "picu-e2e-wd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { removeAllRetry(wd) })
 	d, _, ok := daemonGet(wd)
 	if !ok {
 		t.Fatal("could not start a test browser")
@@ -382,7 +386,9 @@ func TestE2ECrawlRobots(t *testing.T) {
 		return get(url, o)
 	}
 	items := crawl(base+"/", staticOpts(), crawlOpts{depth: 1, pages: 10}, 2, fn,
-		func(host string) []string { return robotsFor(host, robotsGetter) })
+		func(host string) []string {
+			return robotsFor(host, func(t string) (string, error) { return robotsGetter(t, "") })
+		})
 	found := false
 	for _, it := range items {
 		if strings.HasSuffix(it.url, "/private/x") {
