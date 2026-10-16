@@ -198,3 +198,11 @@ version, `doctor` checks the setup.
 gofmt -l . && go vet ./... && go test -count=1 ./... && go build -o picu .
 PICU_LIVE=1 go test -count=1 -run Live .  # live sites, opt-in only
 ```
+
+the default gate stays hermetic: unit tests plus a local fixture
+server that plays static, JS-rendered, login, filter, popup,
+paginated, and robots-blocked pages (`e2e_test.go`). the `Live`
+canaries hit real sites with structural asserts only (they must
+survive site copy edits) and run on schedule via `.github/workflows/
+nightly.yml`, which also installs Chrome — a red nightly means picu
+broke, not the internet.

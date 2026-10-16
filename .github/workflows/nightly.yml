@@ -1,0 +1,20 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: browser-actions/setup-chrome@v1
+      - name: live canaries
+        env:
+          PICU_LIVE: "1"
+        run: go test -count=1 -run Live ./...

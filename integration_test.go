@@ -35,11 +35,13 @@ func TestLiveSingleFetch(t *testing.T) {
 	if via != "static" {
 		t.Errorf("via = %q, want static", via)
 	}
-	if title != "Example Domain" {
-		t.Errorf("title = %q, want Example Domain", title)
+	// Canary asserts stay structural: they must survive site copy edits
+	// and only fire on picu breakage.
+	if !strings.Contains(title, "Example Domain") {
+		t.Errorf("title = %q, want it to mention Example Domain", title)
 	}
-	if !strings.Contains(md, "Example Domain") {
-		t.Errorf("markdown missing expected body, got %q", md)
+	if len(md) == 0 {
+		t.Error("markdown is empty")
 	}
 }
 
@@ -62,6 +64,23 @@ func TestLiveBatchOrderAndEnvelopes(t *testing.T) {
 				t.Errorf("item %d envelope missing key %q", i, k)
 			}
 		}
+	}
+}
+
+// TestLiveCrawlDepth crawls example.com one hop: its only links leave
+// the host, so a correct crawl returns exactly the seed.
+func TestLiveCrawlDepth(t *testing.T) {
+	requireLive(t)
+	items := crawl("https://example.com", liveOpts(), crawlOpts{depth: 1, pages: 10}, 2, get,
+		func(host string) []string { return robotsFor(host, robotsGetter) })
+	if len(items) != 1 {
+		t.Fatalf("visited %d pages, want exactly the seed", len(items))
+	}
+	if items[0].err != nil {
+		t.Fatalf("seed failed: %v", items[0].err)
+	}
+	if items[0].depth != 0 {
+		t.Errorf("seed depth = %d, want 0", items[0].depth)
 	}
 }
 
