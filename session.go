@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -464,6 +465,65 @@ func listSessions() []browserSession {
 		out = append(out, *s)
 	}
 	return out
+}
+
+// sessionDaemonDir mirrors sessionDaemon's directory choice without
+// spawning anything: prune needs the record location, not a browser.
+func sessionDaemonDir(baseWd, proxy string) string {
+	if proxy == "" {
+		return baseWd
+	}
+	h := sha1.Sum([]byte(proxy))
+	return baseWd + ".proxied-" + hex.EncodeToString(h[:4])
+}
+
+// tabAlive asks the recorded daemon browser (never launching one)
+// whether the tab still exists.
+func tabAlive(dir, target string) bool {
+	d, found := readDaemon(dir)
+	if !found || d.Port == 0 {
+		return false
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	res, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", d.Port))
+	if err != nil {
+		return false
+	}
+	defer res.Body.Close()
+	var tabs []struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&tabs); err != nil {
+		return false
+	}
+	for _, t := range tabs {
+		if t.ID == target {
+			return true
+		}
+	}
+	return false
+}
+
+// runPrune implements `picu prune`: drop named sessions whose tab is
+// gone (dead daemon, reboot, crash) so later commands fail fast on
+// names instead of reattaching to ghosts.
+func runPrune() {
+	kept, dropped := 0, 0
+	for _, s := range listSessions() {
+		wd, werr := webdataDir(s.Profile)
+		alive := false
+		if werr == nil {
+			alive = tabAlive(sessionDaemonDir(wd, s.Proxy), s.Target)
+		}
+		if alive {
+			kept++
+			continue
+		}
+		removeSession(s.Name)
+		dropped++
+		fmt.Printf("pruned %s\n", s.Name)
+	}
+	fmt.Printf("%d alive, %d pruned\n", kept, dropped)
 }
 
 // runSessions implements `picu sessions`.

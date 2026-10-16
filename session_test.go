@@ -96,6 +96,31 @@ func TestListSessions(t *testing.T) {
 	}
 }
 
+func TestPruneDropsGhosts(t *testing.T) {
+	t.Setenv("PICU_CONFIG_HOME", t.TempDir())
+	if err := saveSession(&browserSession{Name: "ghost", Target: "dead", Profile: "nope"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(listSessions()) != 1 {
+		t.Fatal("setup should leave one record")
+	}
+	runPrune()
+	if len(listSessions()) != 0 {
+		t.Error("prune should drop the record whose profile/daemon is gone")
+	}
+}
+
+func TestSessionDaemonDirParity(t *testing.T) {
+	if got := sessionDaemonDir("/wd", ""); got != "/wd" {
+		t.Errorf("direct dir = %q", got)
+	}
+	a := sessionDaemonDir("/wd", "http://u:p@h:1")
+	b := sessionDaemonDir("/wd", "http://u:p@h:1")
+	if a == "/wd" || a != b {
+		t.Errorf("proxied dir should be stable and distinct: %q", a)
+	}
+}
+
 func TestSessionRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

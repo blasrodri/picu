@@ -195,6 +195,9 @@ func main() {
 		case "sessions":
 			runSessions()
 			return
+		case "prune":
+			runPrune()
+			return
 		}
 	}
 	if flag.NArg() < 1 {
