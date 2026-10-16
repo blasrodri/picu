@@ -190,9 +190,10 @@ func chromeArgs(headless bool, userDataDir string, port int, proxy string) []str
 		"about:blank",
 	}
 	if headless {
-		// No --mute-audio: headless has no speakers, and muting zeroes
-		// the media pipeline that session audio taps (listen) read.
-		args = append(args, "--headless=new", "--hide-scrollbars",
+		// --mute-audio silences OS output (no stream on your speakers);
+		// taps read upstream of it (SDK track, unmuted element), so
+		// listen keeps hearing while you hear nothing.
+		args = append(args, "--headless=new", "--hide-scrollbars", "--mute-audio",
 			"--user-agent="+desktopUA(),
 			"--autoplay-policy=no-user-gesture-required",
 			"--disable-blink-features=AutomationControlled")
