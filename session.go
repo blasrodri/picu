@@ -261,8 +261,11 @@ func runOpen(args []string, o fetchOpts) {
 	defer cancel()
 	allocCtx, cancelAlloc := remote.NewAllocator(ctx, d.WSURL)
 	defer cancelAlloc()
+	// The tab starts blank and navigates only after attach: the
+	// attach serves proxy auth, so navigating earlier would hit a
+	// 407 with nobody answering and strand the tab on an error page.
 	tmpCtx, cancelTmp := chromedp.NewContext(allocCtx)
-	res, err := chromedp.Call(tmpCtx, target.CreateTarget, target.CreateTargetParams{URL: url})
+	res, err := chromedp.Call(tmpCtx, target.CreateTarget, target.CreateTargetParams{})
 	cancelTmp()
 	if err != nil {
 		fatal(fmt.Sprintf("open: %v", err))
@@ -278,6 +281,9 @@ func runOpen(args []string, o fetchOpts) {
 	defer cancelParent()
 	defer cancelAlloc()
 	defer cancelTask()
+	if _, err := eval("location.href=" + strconv.Quote(url)); err != nil {
+		fatal(fmt.Sprintf("open: %v", err))
+	}
 	// The new tab starts at about:blank; wait for the navigation to land
 	// before snapshotting, otherwise open reports an empty page.
 	deadline := time.Now().Add(20 * time.Second)
