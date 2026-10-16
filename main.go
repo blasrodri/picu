@@ -40,6 +40,7 @@ var (
 	engineFlg    = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
 	doFlg        = flag.String("do", "", "browser actions: click|type|select|read|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
 	sessionFlg   = flag.String("session", "default", "named browser session for open/snap/act/close/watch/bid")
+	followFlg    = flag.Bool("follow", false, "keep listening clip after clip (warmed model, near real time)")
 	watchEvery   = flag.Duration("interval", 15*time.Second, "poll interval for picu watch (5s minimum)")
 	depthFlg     = flag.Int("depth", 1, "crawl link hops beyond the seed (0 = seed only)")
 	pagesFlg     = flag.Int("pages", 30, "crawl total page cap")
@@ -161,14 +162,14 @@ func main() {
 				var perr error
 				secs, perr = strconv.Atoi(flag.Arg(1))
 				if perr != nil || secs <= 0 {
-					fmt.Fprintln(os.Stderr, "usage: picu listen --session S [--seconds N]")
+					fmt.Fprintln(os.Stderr, "usage: picu listen --session S [seconds] [--follow]")
 					os.Exit(2)
 				}
 			} else if flag.NArg() > 2 {
-				fmt.Fprintln(os.Stderr, "usage: picu listen --session S [--seconds N]")
+				fmt.Fprintln(os.Stderr, "usage: picu listen --session S [seconds] [--follow]")
 				os.Exit(2)
 			}
-			runListen(currentOpts(), secs)
+			runListen(currentOpts(), secs, *followFlg)
 			return
 		case "see":
 			question := ""

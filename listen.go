@@ -10,13 +10,16 @@ package main
 // for continuous coverage, same as watch.
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -118,7 +121,19 @@ const listenJS = `(seconds => new Promise(async (resolve, reject) => {
   } catch (e) { reject('tap failed: ' + e); }
 }))`
 
-// sttHelper transcribes one audio file to JSON segments on stdout.
+// sttModel picks speed vs accuracy: tiny halves latency, base hears
+// better. Override with PICU_STT_MODEL.
+func sttModel() string {
+	if m := os.Getenv("PICU_STT_MODEL"); m != "" {
+		return m
+	}
+	return "base"
+}
+
+// sttHelper is a warm transcription server: it loads the model once,
+// then reads one audio path per stdin line and prints one JSON object
+// per line. No per-clip model load, which is what makes follow mode
+// real-time instead of slideshow.
 const sttHelper = `
 import json, sys
 import av
@@ -128,10 +143,18 @@ def _open(file, mode="r", *a, **k):
     return _orig_open(file, mode=mode, *a, **k)
 av.open = _open
 from faster_whisper import WhisperModel
-model = WhisperModel("base", device="auto", compute_type="auto")
-segs, info = model.transcribe(sys.argv[1], beam_size=1, vad_filter=True)
-out = [{"start": round(s.start, 1), "end": round(s.end, 1), "text": s.text.strip()} for s in segs]
-print(json.dumps({"language": info.language, "segments": out}))
+import os
+model = WhisperModel(os.environ.get("PICU_STT_MODEL", "base"), device="auto", compute_type="auto")
+for line in sys.stdin:
+    path = line.strip()
+    if not path:
+        continue
+    try:
+        segs, info = model.transcribe(path, beam_size=1, vad_filter=True)
+        out = [{"start": round(s.start, 1), "end": round(s.end, 1), "text": s.text.strip()} for s in segs]
+        print(json.dumps({"language": info.language, "segments": out}), flush=True)
+    except Exception as e:
+        print(json.dumps({"error": str(e)[:200], "segments": []}), flush=True)
 `
 
 func sttVenv() string {
@@ -146,8 +169,149 @@ func sttVenv() string {
 	return py
 }
 
-// runListen implements `picu listen --session S [--seconds N]`.
-func runListen(o fetchOpts, seconds int) {
+// sttServer keeps one model resident: write an audio path per stdin
+// line, read one transcript object per stdout line.
+type sttServer struct {
+	cmd *exec.Cmd
+	in  io.Writer
+	rd  *bufio.Reader
+}
+
+func startSTT() (*sttServer, error) {
+	py := sttVenv()
+	if py == "" {
+		return nil, fmt.Errorf("no STT engine — install faster-whisper into ~/.local/share/picu/stt")
+	}
+	helper, err := os.CreateTemp("", "picu-stt-*.py")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := helper.WriteString(sttHelper); err != nil {
+		helper.Close()
+		os.Remove(helper.Name())
+		return nil, err
+	}
+	helper.Close()
+	cmd := exec.Command(py, helper.Name())
+	cmd.Env = append(os.Environ(), "HF_HUB_OFFLINE=0", "PICU_STT_MODEL="+sttModel())
+	cmd.Stderr = os.Stderr
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return &sttServer{cmd: cmd, in: in, rd: bufio.NewReader(out)}, nil
+}
+
+func (s *sttServer) stop() {
+	if s.cmd != nil && s.cmd.Process != nil {
+		_ = s.cmd.Process.Kill()
+	}
+}
+
+type transcript struct {
+	Language string `json:"language"`
+	Error    string `json:"error"`
+	Segments []struct {
+		Start float64 `json:"start"`
+		End   float64 `json:"end"`
+		Text  string  `json:"text"`
+	} `json:"segments"`
+}
+
+func (s *sttServer) transcribe(path string) (transcript, error) {
+	var tr transcript
+	if _, err := fmt.Fprintln(s.in, path); err != nil {
+		return tr, err
+	}
+	line, err := s.rd.ReadBytes('\n')
+	if err != nil {
+		return tr, err
+	}
+	if err := json.Unmarshal(line, &tr); err != nil {
+		return tr, err
+	}
+	if tr.Error != "" {
+		return tr, fmt.Errorf("%s", tr.Error)
+	}
+	return tr, nil
+}
+
+// captureClip records seconds of show audio via the in-page tap.
+func captureClip(taskCtx context.Context, seconds int) ([]byte, map[string]any, error) {
+	ctx, cancel := context.WithTimeout(taskCtx, time.Duration(seconds+60)*time.Second)
+	defer cancel()
+	res, err := chromedp.Call(ctx, runtime.Evaluate, runtime.EvaluateParams{
+		Expression:    fmt.Sprintf("(%s)(%d)", listenJS, seconds),
+		AwaitPromise:  boolPtr(true),
+		ReturnByValue: boolPtr(true),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if res.ExceptionDetails != nil {
+		return nil, nil, fmt.Errorf("%s", res.ExceptionDetails.Text)
+	}
+	var got struct {
+		Audio string         `json:"audio"`
+		Diag  map[string]any `json:"diag"`
+	}
+	if err := json.Unmarshal([]byte(res.Result.Value), &got); err != nil {
+		return nil, nil, fmt.Errorf("decode: %v", err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(got.Audio[strings.Index(got.Audio, ",")+1:])
+	if err != nil || len(raw) == 0 {
+		return nil, got.Diag, fmt.Errorf("empty clip")
+	}
+	return raw, got.Diag, nil
+}
+
+var spokenPriceRe = regexp.MustCompile(`[€$£]\s?[\d.,]+|\b\d[\d.,]*\s?(?:euros?|dollars?|usd)\b`)
+var soldCallRe = regexp.MustCompile(`(?i)\bsold\b|vendu|vendido|adjudicad|\bwon\b|congrats|félicitations|enhorabuena`)
+
+// parseShow fuses tab state with seller speech: what product, what
+// price, whether the hammer fell. Deterministic rules, no model — the
+// DOM owns status, speech confirms prices and winner callouts.
+func parseShow(st watchState, tr transcript) map[string]any {
+	var spoken []string
+	for _, sgm := range tr.Segments {
+		for _, m := range spokenPriceRe.FindAllString(sgm.Text, -1) {
+			spoken = append(spoken, strings.TrimSpace(m))
+		}
+	}
+	full := ""
+	for _, sgm := range tr.Segments {
+		full += " " + sgm.Text
+	}
+	soldCall := soldCallRe.MatchString(full)
+	verdict := "idle"
+	switch {
+	case st.Status == "live" && st.Price != "":
+		verdict = fmt.Sprintf("LIVE: %s at %s", strings.TrimSpace(st.Product), st.Price)
+	case st.Status == "live":
+		verdict = fmt.Sprintf("LIVE: %s (no price yet)", strings.TrimSpace(st.Product))
+	case st.Winner != "":
+		verdict = fmt.Sprintf("SOLD to %s: %s", st.Winner, strings.TrimSpace(st.Product))
+	case soldCall:
+		verdict = "hammer fell on air: " + strings.TrimSpace(st.Product)
+	case strings.TrimSpace(st.Product) != "":
+		verdict = "between lots: " + strings.TrimSpace(st.Product)
+	}
+	return map[string]any{
+		"verdict": verdict, "spokenPrices": spoken, "soldCall": soldCall,
+		"product": st.Product, "price": st.Price, "status": st.Status, "winner": st.Winner,
+	}
+}
+
+// runListen implements `picu listen --session S [seconds] [--follow]`:
+// one clip by default, back-to-back clips with a warm model on follow.
+func runListen(o fetchOpts, seconds int, follow bool) {
 	if seconds < 3 {
 		seconds = 3
 	}
@@ -159,87 +323,68 @@ func runListen(o fetchOpts, seconds int) {
 	if err != nil {
 		fatal(err.Error())
 	}
-	taskCtx, _, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
+	fmt.Fprintln(os.Stderr, "listen: warming up transcription (loads once)")
+	stt, err := startSTT()
 	if err != nil {
 		fatal(err.Error())
+	}
+	defer stt.stop()
+	for {
+		if err := listenOnce(o, s, stt, seconds); err != nil {
+			fmt.Fprintf(os.Stderr, "listen: %v — retrying\n", err)
+		}
+		if !follow {
+			return
+		}
+	}
+}
+
+func listenOnce(o fetchOpts, s *browserSession, stt *sttServer, seconds int) error {
+	taskCtx, eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
+	if err != nil {
+		return err
 	}
 	defer cancelParent()
 	defer cancelAlloc()
 	defer cancelTask()
-	ctx, cancel := context.WithTimeout(taskCtx, time.Duration(seconds+60)*time.Second)
-	defer cancel()
-	res, err := chromedp.Call(ctx, runtime.Evaluate, runtime.EvaluateParams{
-		Expression:    fmt.Sprintf("(%s)(%d)", listenJS, seconds),
-		AwaitPromise:  boolPtr(true),
-		ReturnByValue: boolPtr(true),
-	})
+	raw, diag, err := captureClip(taskCtx, seconds)
 	if err != nil {
-		fatal(fmt.Sprintf("listen: %v", err))
-	}
-	if res.ExceptionDetails != nil {
-		fatal(fmt.Sprintf("listen: %s", res.ExceptionDetails.Text))
-	}
-	var got struct {
-		Audio string         `json:"audio"`
-		Diag  map[string]any `json:"diag"`
-	}
-	if err := json.Unmarshal([]byte(res.Result.Value), &got); err != nil {
-		fatal(fmt.Sprintf("listen: decode: %v", err))
-	}
-	raw, err := base64.StdEncoding.DecodeString(got.Audio[strings.Index(got.Audio, ",")+1:])
-	if err != nil || len(raw) == 0 {
-		fatal("listen: empty clip (seller muted? autoplay blocked?)")
-	}
-	py := sttVenv()
-	if py == "" {
-		fatal("listen: no STT engine — install faster-whisper into ~/.local/share/picu/stt")
+		return err
 	}
 	tmp, err := os.CreateTemp("", "picu-clip-*.webm")
 	if err != nil {
-		fatal(err.Error())
+		return err
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(raw); err != nil {
 		tmp.Close()
-		fatal(err.Error())
+		return err
 	}
 	tmp.Close()
-	helper, err := os.CreateTemp("", "picu-stt-*.py")
+	tr, err := stt.transcribe(tmp.Name())
 	if err != nil {
-		fatal(err.Error())
+		return fmt.Errorf("transcribe: %v", err)
 	}
-	defer os.Remove(helper.Name())
-	if _, err := helper.WriteString(sttHelper); err != nil {
-		helper.Close()
-		fatal(err.Error())
+	var st watchState
+	if sraw, serr := eval(whatnotStateJS); serr == nil {
+		_ = json.Unmarshal([]byte(sraw), &st)
 	}
-	helper.Close()
-	cmd := exec.Command(py, helper.Name(), tmp.Name())
-	cmd.Env = append(os.Environ(), "HF_HUB_OFFLINE=0")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		fatal(fmt.Sprintf("listen: transcribe: %v\n%s", err, string(out)))
-	}
-	var tr struct {
-		Language string `json:"language"`
-		Segments []struct {
+	segs := tr.Segments
+	if segs == nil {
+		segs = []struct {
 			Start float64 `json:"start"`
 			End   float64 `json:"end"`
 			Text  string  `json:"text"`
-		} `json:"segments"`
+		}{}
 	}
-	if err := json.Unmarshal(out, &tr); err != nil {
-		fatal(fmt.Sprintf("listen: parse transcript: %v", err))
-	}
-	doc := map[string]any{
-		"ts": time.Now().UTC().Format(time.RFC3339), "session": s.Name,
-		"clipSeconds": seconds, "clipBytes": len(raw), "diag": got.Diag,
-		"language": tr.Language, "segments": tr.Segments,
-	}
-	if doc["segments"] == nil {
-		doc["segments"] = []any{}
-	}
+	parsed := parseShow(st, tr)
+	parsed["ts"] = time.Now().UTC().Format(time.RFC3339)
+	parsed["session"] = s.Name
+	parsed["clipSeconds"] = seconds
+	parsed["language"] = tr.Language
+	parsed["segments"] = segs
+	parsed["diag"] = diag
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetEscapeHTML(false)
-	_ = enc.Encode(doc)
+	return enc.Encode(parsed)
 }
