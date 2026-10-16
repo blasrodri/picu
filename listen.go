@@ -228,6 +228,7 @@ func listenOnce(o fetchOpts, s *browserSession, stt *sttServer, plugin string, s
 	defer cancelParent()
 	defer cancelAlloc()
 	defer cancelTask()
+	pruneVideos(eval)
 	raw, diag, err := captureClip(taskCtx, pluginTap(plugin), seconds)
 	if err != nil {
 		return err

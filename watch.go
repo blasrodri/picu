@@ -37,6 +37,9 @@ func runWatch(o fetchOpts, plugin string, interval time.Duration) {
 	var last string
 	first := true
 	for {
+		// Decode is pure cost here: drop video elements every tick
+		// (the player recreates nothing; see reloads for its frame).
+		pruneVideos(eval)
 		raw, err := eval(stateJS)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "watch: read failed (%v) — retrying\n", err)

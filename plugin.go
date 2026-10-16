@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 //go:embed plugins/*/*.js
@@ -45,6 +46,22 @@ func pluginHas(name, file string) bool {
 	}
 	_, err := pluginFS.ReadFile("plugins/" + name + "/" + file)
 	return err == nil
+}
+
+// pruneVideos drops every video element in the tab. Decoding live
+// video is the browser's biggest cost on stream tabs; pausing is
+// futile (the player resumes within seconds), but removal sticks —
+// the SDK does not recreate the element. The audio tap reads the SDK
+// track, not pixels, so watch/listen run blind; see reloads the tab
+// when it needs a frame.
+func pruneVideos(eval func(string) (string, error)) {
+	_, _ = eval(`[...document.querySelectorAll('video')].forEach(v=>{try{v.pause()}catch(e){}try{v.remove()}catch(e){}}),"ok"`)
+}
+
+// videosPresent reports whether the tab currently has a video element.
+func videosPresent(eval func(string) (string, error)) bool {
+	raw, err := eval(`document.querySelectorAll('video').length`)
+	return err == nil && strings.TrimSpace(raw) != "" && strings.TrimSpace(raw) != "0"
 }
 
 // runEval implements `picu eval --session S 'JS'`: the generic plugin

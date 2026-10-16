@@ -130,6 +130,18 @@ func seeOnce(taskCtx context.Context, eval func(string) (string, error), s *brow
 	if err := json.Unmarshal([]byte(raw), &st); err != nil {
 		return err
 	}
+	// Watch/listen prune video elements: reload when none is left so
+	// there are fresh pixels to capture, then let one frame land.
+	if !videosPresent(eval) {
+		if _, err := eval(`location.reload(),"ok"`); err != nil {
+			return err
+		}
+		deadline := time.Now().Add(25 * time.Second)
+		for !videosPresent(eval) && time.Now().Before(deadline) {
+			time.Sleep(2 * time.Second)
+		}
+	}
+	time.Sleep(600 * time.Millisecond)
 	q := i64Ptr(60)
 	shot, err := chromedp.Call(taskCtx, page.CaptureScreenshot, page.CaptureScreenshotParams{
 		Format: page.CaptureScreenshotFormatJpeg, Quality: q,
