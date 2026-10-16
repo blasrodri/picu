@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -56,6 +58,29 @@ func TestResolveRef(t *testing.T) {
 		if got := resolveRef(keep, els); got != keep {
 			t.Errorf("resolveRef(%q) = %q, want passthrough", keep, got)
 		}
+	}
+}
+
+func TestListSessions(t *testing.T) {
+	t.Setenv("PICU_CONFIG_HOME", t.TempDir())
+	if err := saveSession(&browserSession{Name: "a", Target: "t1", Profile: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSession(&browserSession{Name: "b", Target: "t2", Profile: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt record is skipped, not fatal. Write it straight into the
+	// sessions dir next to the good ones.
+	sp, err := sessionPath("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(sp), "bad.json"), []byte("{nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	all := listSessions()
+	if len(all) != 2 {
+		t.Fatalf("listSessions = %+v", all)
 	}
 }
 

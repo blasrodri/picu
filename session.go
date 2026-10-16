@@ -292,7 +292,7 @@ func runSnap(o fetchOpts) {
 // runAct implements `picu act [--session S] verb args…` (one step).
 func runAct(args []string, o fetchOpts) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: picu act [--session S] click|type|select|wait|scroll|press|back …")
+		fmt.Fprintln(os.Stderr, "usage: picu act [--session S] click|type|select|read|wait|scroll|press|back …  (one step, or one quoted ;-script)")
 		os.Exit(2)
 	}
 	name := *sessionFlg
@@ -307,30 +307,115 @@ func runAct(args []string, o fetchOpts) {
 	defer cancelParent()
 	defer cancelAlloc()
 	defer cancelTask()
-	// act takes exactly one step: parse argv directly (no re-join) so
-	// quoted multi-word selectors keep their grouping. Use ; scripts
-	// with --do for multi-step flows.
-	a, err := parseStep(args, strings.Join(args, " "))
+	steps, err := parseActArgs(args)
 	if err != nil {
 		fatal(err.Error())
 	}
-	if a.sel != "" {
-		if _, err := strconv.Atoi(strings.TrimSpace(a.sel)); err == nil {
-			els, err := snapshotElements(eval)
-			if err != nil {
-				fatal(err.Error())
-			}
-			a.sel = resolveRef(a.sel, els)
+	needEls := false
+	for _, st := range steps {
+		if _, err := strconv.Atoi(strings.TrimSpace(st.sel)); st.sel != "" && err == nil {
+			needEls = true
+			break
 		}
 	}
-	if err := runActions(eval, []action{a}); err != nil {
+	if needEls {
+		els, err := snapshotElements(eval)
+		if err != nil {
+			fatal(err.Error())
+		}
+		for i := range steps {
+			steps[i].sel = resolveRef(steps[i].sel, els)
+		}
+	}
+	results, err := runSteps(eval, steps)
+	if err != nil {
 		fatal(err.Error())
+	}
+	u := sessionURL(eval)
+	if *asJSON {
+		els, err := snapshotElements(eval)
+		if err != nil {
+			fatal(err.Error())
+		}
+		doc := map[string]any{"url": u, "results": results, "elements": els}
+		if els == nil {
+			doc["elements"] = []snapEl{}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(doc)
+		return
+	}
+	// A lone read prints just the text: it changes nothing, so the
+	// caller's refs stay valid without a re-snapshot.
+	if len(steps) == 1 && steps[0].verb == "read" {
+		fmt.Println(results[0])
+		return
 	}
 	els, err := snapshotElements(eval)
 	if err != nil {
 		fatal(err.Error())
 	}
-	snapOutput(sessionURL(eval), els)
+	snapOutput(u, els)
+}
+
+// parseActArgs parses one act step from argv (quoting preserved), or a
+// ;-separated script when given as a single string — the same language
+// as --do, but against the persistent session tab.
+func parseActArgs(args []string) ([]action, error) {
+	if len(args) == 1 && strings.Contains(args[0], ";") {
+		return parseDo(args[0])
+	}
+	a, err := parseStep(args, strings.Join(args, " "))
+	if err != nil {
+		return nil, err
+	}
+	return []action{a}, nil
+}
+
+// listSessions returns saved sessions, skipping corrupt records.
+func listSessions() []browserSession {
+	var out []browserSession
+	dir := filepath.Join(configDir(), "sessions")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".json")
+		s, err := loadSession(name)
+		if err != nil {
+			continue
+		}
+		out = append(out, *s)
+	}
+	return out
+}
+
+// runSessions implements `picu sessions`.
+func runSessions() {
+	all := listSessions()
+	if *asJSON {
+		if all == nil {
+			all = []browserSession{}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(all)
+		return
+	}
+	if len(all) == 0 {
+		fmt.Println("no sessions — run: picu open --profile NAME URL")
+		return
+	}
+	for _, s := range all {
+		fmt.Printf("%s (profile %s)\n", s.Name, s.Profile)
+	}
 }
 
 // runClose implements `picu close [--session S]`.

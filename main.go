@@ -35,7 +35,7 @@ var (
 	jobs        = flag.Int("jobs", 4, "parallel fetch workers for multiple URLs")
 	countFlg    = flag.Int("count", 10, "results for picu search (0 keeps all)")
 	engineFlg   = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
-	doFlg       = flag.String("do", "", "browser actions: click|type|select|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
+	doFlg       = flag.String("do", "", "browser actions: click|type|select|read|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
 	sessionFlg  = flag.String("session", "default", "named browser session for open/snap/act/close")
 	depthFlg    = flag.Int("depth", 1, "crawl link hops beyond the seed (0 = seed only)")
 	pagesFlg    = flag.Int("pages", 30, "crawl total page cap")
@@ -114,6 +114,9 @@ func main() {
 			return
 		case "crawl":
 			runCrawl(flag.Args()[1:], currentOpts())
+			return
+		case "sessions":
+			runSessions()
 			return
 		}
 	}

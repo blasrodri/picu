@@ -32,7 +32,7 @@ func TestParseDo(t *testing.T) {
 	if err != nil || steps[0].verb != "select" || steps[0].sel != "#fterr" || steps[0].arg != "T10 (4378 paradas)" {
 		t.Errorf("select parsed as %+v, %v", steps, err)
 	}
-	for _, bad := range []string{"", "frobnicate #x", "click", "type #q", "select #x", "wait", "press", "back #x", "click #a #b"} {
+	for _, bad := range []string{"", "frobnicate #x", "click", "type #q", "select #x", "read", "wait", "press", "back #x", "click #a #b"} {
 		if _, err := parseDo(bad); err == nil {
 			t.Errorf("%q should fail", bad)
 		}
@@ -135,6 +135,40 @@ func TestParseStepKeepsArgvGrouping(t *testing.T) {
 	a, err = parseStep([]string{"type", "#q", "hello world"}, "type #q hello world")
 	if err != nil || a.sel != "#q" || a.arg != "hello world" {
 		t.Errorf("argv type parsed as %+v, %v", a, err)
+	}
+}
+
+func TestReadVerb(t *testing.T) {
+	pg := &stubPage{present: map[string]bool{"#popup": true}}
+	steps, err := parseDo(`read #popup`)
+	if err != nil || steps[0].verb != "read" || steps[0].sel != "#popup" {
+		t.Fatalf("read parsed as %+v, %v", steps, err)
+	}
+	results, err := runSteps(pg.eval, steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %v", results)
+	}
+	if !strings.Contains(pg.ran[0], "innerText") {
+		t.Errorf("read did not fetch element text: %q", pg.ran[0])
+	}
+	if got := shortRes(strings.Repeat("x", 300)); !strings.HasSuffix(got, "…") || len(got) != 203 {
+		t.Errorf("long results should truncate in logs, got len %d", len(got))
+	}
+}
+
+func TestParseActArgs(t *testing.T) {
+	// One quoted string with ; is a script.
+	steps, err := parseActArgs([]string{"click #a; click #b"})
+	if err != nil || len(steps) != 2 {
+		t.Fatalf("script parsed as %+v, %v", steps, err)
+	}
+	// Bare argv stays one step with grouping intact.
+	steps, err = parseActArgs([]string{"click", "#map img"})
+	if err != nil || len(steps) != 1 || steps[0].sel != "#map img" {
+		t.Fatalf("argv parsed as %+v, %v", steps, err)
 	}
 }
 

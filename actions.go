@@ -56,7 +56,7 @@ func parseStep(toks []string, raw string) (action, error) {
 	}
 	a := action{verb: strings.ToLower(toks[0])}
 	switch a.verb {
-	case "click", "scroll":
+	case "click", "scroll", "read":
 		if len(toks) != 2 {
 			return action{}, fmt.Errorf("--do %q needs exactly a selector", raw)
 		}
@@ -86,7 +86,7 @@ func parseStep(toks []string, raw string) (action, error) {
 			return action{}, fmt.Errorf("--do %q takes no arguments", raw)
 		}
 	default:
-		return action{}, fmt.Errorf("--do unknown verb %q (click|type|select|wait|scroll|press|back)", toks[0])
+		return action{}, fmt.Errorf("--do unknown verb %q (click|type|select|read|wait|scroll|press|back)", toks[0])
 	}
 	return a, nil
 }
@@ -152,15 +152,34 @@ func keyName(k string) string {
 // runActions executes parsed steps through eval and logs each to stderr.
 // A selector that matches nothing fails the run loudly.
 func runActions(eval func(string) (string, error), steps []action) error {
+	_, err := runSteps(eval, steps)
+	return err
+}
+
+// runSteps executes steps in order, logging each to stderr and returning
+// every step's result for machine-readable envelopes (--json).
+func runSteps(eval func(string) (string, error), steps []action) ([]string, error) {
+	var out []string
 	for _, a := range steps {
 		res, err := runOne(eval, a)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "act: %s → error: %v\n", describe(a), err)
-			return err
+			return out, err
 		}
-		fmt.Fprintf(os.Stderr, "act: %s → %s\n", describe(a), res)
+		fmt.Fprintf(os.Stderr, "act: %s → %s\n", describe(a), shortRes(res))
+		out = append(out, res)
 	}
-	return nil
+	return out, nil
+}
+
+// shortRes keeps step logs scannable: full results belong on stdout
+// (--json) or in the read output, not in every stderr line.
+func shortRes(s string) string {
+	const max = 200
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 func describe(a action) string {
@@ -183,6 +202,8 @@ func describe(a action) string {
 		return "wait " + a.arg
 	case "press":
 		return "press " + a.arg
+	case "read":
+		return "read " + q(a.sel)
 	case "back":
 		return "back"
 	default:
@@ -208,6 +229,10 @@ func runOne(eval func(string) (string, error), a action) (string, error) {
 	switch a.verb {
 	case "click":
 		return need(eval(jsOK(a.sel, `el.click();return 'ok'`)))
+	case "read":
+		// Full element text, no snapshot truncation: the on-demand read
+		// behind popup bodies and long labels.
+		return need(eval(jsOK(a.sel, `return ('innerText' in el && el.innerText) ? el.innerText : (el.value||'')`)))
 	case "type":
 		return need(eval(jsOK(a.sel,
 			`if('value' in el){el.value=`+strconv.Quote(a.arg)+`}else{el.textContent=`+strconv.Quote(a.arg)+`}`+

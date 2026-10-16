@@ -90,8 +90,9 @@ picu --profile g --renderer chrome --do "type #q hello; click #go; wait .results
 
 `--do` runs scripted steps in one Chrome session before the dump:
 `click`, `type` (text never appears in logs), `select` (dropdown option
-by index, value, or visible-text prefix), `wait` (selector or duration),
-`scroll` (selector, top, bottom), `press` (Enter, Escape, Tab…), `back`.
+by index, value, or visible-text prefix), `read` (full element text, no
+truncation), `wait` (selector or duration), `scroll` (selector, top,
+bottom), `press` (Enter, Escape, Tab…), `back`.
 steps split on `;`, the first token after the verb is always the
 selector (quote it when it holds spaces), each step logs to stderr, and
 a selector matching nothing fails the run. combine with `--profile` or
@@ -112,7 +113,12 @@ live check still open: run it once the limit lifts and compare.
 ```bash
 picu open --profile g example.com/form        # snapshot with [ref]s
 picu snap --session default                   # re-snapshot the live tab
-picu act --session default type 0 hello       # one step: click|type|select|wait|scroll|press|back
+picu act --session default type 0 hello       # verbs: click|type|select|read|wait|scroll|press|back
+picu act --session default "select 2 T10; type 0 query"   # one quoted ;-script, same language as --do
+picu act --session default read 5             # full element text, no truncation (prints only the text)
+picu snap --session default --json            # {"url":…, "elements":[{ref,role,name,selector}]}
+picu act --session default click 1 --json     # {"url":…, "results":[…], "elements":[…]}
+picu sessions                                 # named sessions on disk
 picu close --session default                  # close tab, drop session
 ```
 
@@ -120,8 +126,11 @@ picu close --session default                  # close tab, drop session
 ref snapshot every command; `snap`/`act` reattach to it, so page state
 (cookies, inputs, navigation) survives between invocations and the
 agent — not picu — is the loop brain. detach-on-cancel leaves the tab
-open; `close` is the only command that kills it. each command is its
-own process with JSON-friendly stdout and exit 0/1/2.
+open; `close` is the only command that kills it. refs are per
+snapshot: re-read them after every command that changes the page.
+each command is its own process with JSON-friendly stdout and exit
+0/1/2. an idle daemon is reaped after minutes — a dead tab reports
+`session expired`, and the loop re-opens.
 
 ## daemon (opt-in speed)
 
