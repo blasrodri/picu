@@ -125,6 +125,8 @@ picu act --session default "select 2 T10; type 0 query"   # one quoted ;-script,
 picu act --session default read 5             # full element text, no truncation (prints only the text)
 picu snap --session default --json            # {"url":…, "elements":[{ref,role,name,selector}]}
 picu act --session default click 1 --json     # {"url":…, "results":[…], "elements":[…]}
+picu watch --session default --interval 10s   # live-show feed: one JSON line per state change
+picu bid --session default 150                # one explicit bid at or under 150, never auto-confirms
 picu sessions                                 # named sessions on disk
 picu close --session default                  # close tab, drop session
 ```
@@ -136,8 +138,14 @@ agent — not picu — is the loop brain. detach-on-cancel leaves the tab
 open; `close` is the only command that kills it. refs are per
 snapshot: re-read them after every command that changes the page.
 each command is its own process with JSON-friendly stdout and exit
-0/1/2. an idle daemon is reaped after minutes — a dead tab reports
-`session expired`, and the loop re-opens.
+0/1/2. session daemons live up to a day idle (fetch daemons minutes);
+past that, or after a rebuild or reboot, a dead tab reports
+`session expired`, and the loop re-opens (login persists in the
+profile, so re-opening is a new tab, not a re-login).
+`watch` polls read-only on a slow ticker for live-shopping tabs
+(stream, product, price, winner — Whatnot-shaped today); `bid` clicks
+the live bid button only at or under your max and leaves any
+confirmation dialog to you — picu never confirms purchases.
 
 ## daemon (opt-in speed)
 

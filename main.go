@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +39,8 @@ var (
 	countFlg     = flag.Int("count", 10, "results for picu search (0 keeps all)")
 	engineFlg    = flag.String("engine", "ddg", "search engine: ddg|google (google needs an accepted session)")
 	doFlg        = flag.String("do", "", "browser actions: click|type|select|read|wait|scroll|press|back steps separated by ; (needs --renderer chrome)")
-	sessionFlg   = flag.String("session", "default", "named browser session for open/snap/act/close")
+	sessionFlg   = flag.String("session", "default", "named browser session for open/snap/act/close/watch/bid")
+	watchEvery   = flag.Duration("interval", 15*time.Second, "poll interval for picu watch (5s minimum)")
 	depthFlg     = flag.Int("depth", 1, "crawl link hops beyond the seed (0 = seed only)")
 	pagesFlg     = flag.Int("pages", 30, "crawl total page cap")
 	proxyFlg     = flag.String("proxy", "", "proxy URL for fetches (http/https only), e.g. http://127.0.0.1:8080")
@@ -130,6 +132,21 @@ func main() {
 			return
 		case "close":
 			runClose()
+			return
+		case "watch":
+			runWatch(currentOpts(), *watchEvery)
+			return
+		case "bid":
+			if flag.NArg() != 2 {
+				fmt.Fprintln(os.Stderr, "usage: picu bid --session S MAX (one explicit bid at or under MAX)")
+				os.Exit(2)
+			}
+			max, err := strconv.ParseFloat(flag.Arg(1), 64)
+			if err != nil || max <= 0 {
+				fmt.Fprintln(os.Stderr, "usage: picu bid --session S MAX (MAX is a positive number)")
+				os.Exit(2)
+			}
+			runBid(currentOpts(), max)
 			return
 		case "crawl":
 			runCrawl(flag.Args()[1:], currentOpts())
@@ -735,7 +752,7 @@ func normalizeURL(raw string) string {
 	return "https://" + raw
 }
 
-var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true, "session": true, "depth": true, "pages": true, "proxy": true, "proxy-file": true}
+var valueFlags = map[string]bool{"budget": true, "cache": true, "timeout": true, "renderer": true, "profile": true, "cookie-file": true, "login-timeout": true, "settle": true, "select": true, "schema": true, "jobs": true, "extract": true, "count": true, "engine": true, "do": true, "session": true, "depth": true, "pages": true, "proxy": true, "proxy-file": true, "interval": true}
 
 // fetchOpts is the fetch pipeline's configuration, snapshotted from flags
 // once per run so pipeline functions take it explicitly instead of reading

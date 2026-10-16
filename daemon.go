@@ -21,6 +21,11 @@ import (
 // the next chrome fetch instead of lingering for days.
 const daemonIdleTTL = 5 * time.Minute
 
+// sessionIdleTTL is generous on purpose: named sessions are tabs the
+// user leaves open (streams, portals), so their browser must survive
+// long gaps between commands. Reboots still end them — Chrome owns that.
+const sessionIdleTTL = 24 * time.Hour
+
 type daemonInfo struct {
 	PID     int    `json:"pid"`
 	Port    int    `json:"port"`
@@ -173,7 +178,7 @@ func daemonSpawnProxy(userDir, proxy string) (daemonInfo, bool) {
 
 // daemonGet returns a live daemon browser, spawning or reaping as needed.
 // Every failure path returns ok=false and the caller cold-launches.
-func daemonGetWith(userDir string, spawn func(string) (daemonInfo, bool)) (d daemonInfo, fresh, ok bool) {
+func daemonGetWith(userDir string, ttl time.Duration, spawn func(string) (daemonInfo, bool)) (d daemonInfo, fresh, ok bool) {
 	var zero daemonInfo
 	raw, _ := os.ReadFile(daemonFile(userDir))
 	var cur daemonInfo
@@ -188,7 +193,7 @@ func daemonGetWith(userDir string, spawn func(string) (daemonInfo, bool)) (d dae
 		// profile against the new binary, then start fresh below.
 		killIfChrome(cur.PID)
 		removeDaemonFile(userDir)
-	} else if time.Since(time.Unix(cur.LastUse, 0)) > daemonIdleTTL {
+	} else if time.Since(time.Unix(cur.LastUse, 0)) > ttl {
 		killIfChrome(cur.PID)
 		removeDaemonFile(userDir)
 	} else if ws, err := debuggerURL(cur.Port); err == nil && ws != "" {
@@ -207,7 +212,7 @@ func daemonGetWith(userDir string, spawn func(string) (daemonInfo, bool)) (d dae
 }
 
 func daemonGet(userDir string) (daemonInfo, bool, bool) {
-	return daemonGetWith(userDir, daemonSpawn)
+	return daemonGetWith(userDir, daemonIdleTTL, daemonSpawn)
 }
 
 // isLockErr reports a Chrome profile-lock refusal: another browser owns

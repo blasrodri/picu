@@ -50,7 +50,7 @@ func TestDaemonGetReuses(t *testing.T) {
 	saveDaemon(dir, daemonInfo{PID: os.Getpid(), Port: port, WSURL: "ws://stale",
 		Build: picuBuildID(), Dir: dir, LastUse: time.Now().Unix()})
 	spawned := 0
-	got, fresh, ok := daemonGetWith(dir, func(string) (daemonInfo, bool) {
+	got, fresh, ok := daemonGetWith(dir, daemonIdleTTL, func(string) (daemonInfo, bool) {
 		spawned++
 		return daemonInfo{}, false
 	})
@@ -61,6 +61,41 @@ func TestDaemonGetReuses(t *testing.T) {
 		t.Error("reuse must not spawn")
 	}
 	if got.WSURL != "ws://reused/1" {
+		t.Errorf("ws url should refresh from probe, got %q", got.WSURL)
+	}
+}
+
+func TestSessionTTLOutlivesFetchTTL(t *testing.T) {
+	dir := daemonTestDir(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"webSocketDebuggerUrl":"ws://session/1"}`)
+	}))
+	defer srv.Close()
+	port, err := strconv.Atoi(strings.TrimPrefix(srv.URL, "http://127.0.0.1:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveDaemon(dir, daemonInfo{PID: os.Getpid(), Port: port, WSURL: "ws://stale",
+		Build: picuBuildID(), Dir: dir, LastUse: time.Now().Add(-time.Hour).Unix()})
+	spawned := 0
+	fail := func(string) (daemonInfo, bool) { spawned++; return daemonInfo{}, false }
+	if _, _, ok := daemonGetWith(dir, daemonIdleTTL, fail); ok {
+		t.Error("hour-idle daemon should be past the fetch TTL")
+	}
+	if spawned != 1 {
+		t.Errorf("reap-then-respawn should run spawn once, ran %d", spawned)
+	}
+	// The reap above removed the record; restore it for the session-TTL leg.
+	saveDaemon(dir, daemonInfo{PID: os.Getpid(), Port: port, WSURL: "ws://stale",
+		Build: picuBuildID(), Dir: dir, LastUse: time.Now().Add(-time.Hour).Unix()})
+	got, _, ok := daemonGetWith(dir, sessionIdleTTL, fail)
+	if !ok {
+		t.Fatal("hour-idle daemon should survive the session TTL")
+	}
+	if spawned != 1 {
+		t.Errorf("session reuse must not spawn, ran %d total", spawned)
+	}
+	if got.WSURL != "ws://session/1" {
 		t.Errorf("ws url should refresh from probe, got %q", got.WSURL)
 	}
 }
@@ -83,7 +118,7 @@ func TestDaemonGetSpawnsWhenStale(t *testing.T) {
 		Build: picuBuildID(), Dir: dir, LastUse: time.Now().Unix()})
 	spawned := 0
 	fake := daemonInfo{PID: 4242, Port: 19998, WSURL: "ws://new", Build: picuBuildID()}
-	got, fresh, ok := daemonGetWith(dir, func(string) (daemonInfo, bool) {
+	got, fresh, ok := daemonGetWith(dir, daemonIdleTTL, func(string) (daemonInfo, bool) {
 		spawned++
 		return fake, true
 	})

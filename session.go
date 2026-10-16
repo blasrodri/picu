@@ -38,7 +38,7 @@ type browserSession struct {
 // long-lived direct browser is never contaminated.
 func sessionDaemon(baseWd, proxy string) (daemonInfo, bool) {
 	if proxy == "" {
-		d, _, ok := daemonGet(baseWd)
+		d, _, ok := daemonGetWith(baseWd, sessionIdleTTL, daemonSpawn)
 		return d, ok
 	}
 	h := sha1.Sum([]byte(proxy))
@@ -48,7 +48,7 @@ func sessionDaemon(baseWd, proxy string) (daemonInfo, bool) {
 			return daemonInfo{}, false
 		}
 	}
-	d, _, ok := daemonGetWith(dir, func(d string) (daemonInfo, bool) {
+	d, _, ok := daemonGetWith(dir, sessionIdleTTL, func(d string) (daemonInfo, bool) {
 		return daemonSpawnProxy(d, proxy)
 	})
 	return d, ok
