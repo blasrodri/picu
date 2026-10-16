@@ -15,6 +15,19 @@ make install                                    # builds ./picu, copies to ~/.lo
 v0.1: static fetch, readability-style strip, token budget, disk cache.
 v0.2: Lightpanda sidecar, `--profile`, `--visible` assist, `--select`.
 
+## releases
+
+push a tag and CI builds all four platform tarballs onto a GitHub
+release with the version stamped in (`--version` and User-Agent):
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+curl -sL https://github.com/blasrodri/picu/releases/download/v0.2.0/picu-v0.2.0-darwin-arm64.tar.gz | tar xz
+```
+
+`main` stays releasable: CI runs `gofmt`, `go vet`, tests, and a
+build on Linux and macOS for every push and pull request.
+
 ## tui
 
 ```bash

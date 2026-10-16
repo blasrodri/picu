@@ -7,7 +7,9 @@ import (
 	"strings"
 )
 
-const picuVersion = "0.1"
+// picuVersion defaults to dev; releases stamp it via
+// -ldflags "-X main.picuVersion=vX.Y.Z" (see .github/workflows).
+var picuVersion = "dev"
 
 // runDoctor reports everything a fetch depends on: renderer binaries,
 // saved profiles with clearance state, and data directories. One fact

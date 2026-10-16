@@ -1,0 +1,25 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: build all platforms
+        run: |
+          for target in "darwin arm64" "darwin amd64" "linux amd64" "linux arm64"; do
+            set -- $target
+            GOOS=$1 GOARCH=$2 go build -ldflags "-X main.picuVersion=${{ github.ref_name }}" -o picu .
+            tar czf picu-${{ github.ref_name }}-$1-$2.tar.gz picu
+          done
+      - name: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create ${{ github.ref_name }} --generate-notes picu-*.tar.gz
