@@ -58,11 +58,22 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, b, 0o600)
 }
 
+// profileSubdir adapts to what the source dir is: a Chrome user-data
+// dir holds profiles under Default/, but PICU_CHROME_PROFILE may point
+// straight at a profile dir (e.g. .../Chrome/Profile 1), which carries
+// Cookies at top level.
+func profileSubdir(srcUserData string) string {
+	if _, err := os.Stat(filepath.Join(srcUserData, "Default", "Cookies")); err == nil {
+		return "Default"
+	}
+	return ""
+}
+
 func copySessionTree(srcUserData, dstRoot string) (int64, error) {
 	var copied int64
 	dstDefault := filepath.Join(dstRoot, "Default")
 	for _, name := range sessionTreeFiles {
-		src := filepath.Join(srcUserData, "Default", name)
+		src := filepath.Join(srcUserData, profileSubdir(srcUserData), name)
 		if name == "Local State" {
 			src = filepath.Join(srcUserData, name)
 		}
@@ -80,7 +91,7 @@ func copySessionTree(srcUserData, dstRoot string) (int64, error) {
 		}
 	}
 	for _, dir := range sessionTreeDirs {
-		src := filepath.Join(srcUserData, "Default", dir)
+		src := filepath.Join(srcUserData, profileSubdir(srcUserData), dir)
 		entries, err := os.ReadDir(src)
 		if err != nil {
 			continue

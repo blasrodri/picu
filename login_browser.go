@@ -186,7 +186,7 @@ func copyMinimalProfile(srcUserData string) (string, func(), error) {
 	}
 	var copied int64
 	for _, name := range minimalProfileFiles {
-		src := filepath.Join(srcUserData, "Default", name)
+		src := filepath.Join(srcUserData, profileSubdir(srcUserData), name)
 		if _, err := os.Stat(src); err != nil {
 			continue
 		}
