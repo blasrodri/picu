@@ -508,6 +508,80 @@ func TestE2ELiveImport(t *testing.T) {
 	}
 }
 
+// TestE2EProxiedSession pins a session to a proxy: open through it,
+// then reattach like a later command and land on the same live tab.
+// proxied.test cannot resolve directly, so any render proves the proxy.
+func TestE2EProxiedSession(t *testing.T) {
+	needRenderer(t, "chrome")
+	var hits int
+	proxy := forwardProxy(t, &hits)
+	home, err := os.MkdirTemp("", "picu-e2e-home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICU_CONFIG_HOME", home)
+	t.Cleanup(func() { removeAllRetry(home) })
+	baseWd, err := webdataDir("psess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(baseWd+"/Default", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d, ok := sessionDaemon(baseWd, proxy)
+	if !ok {
+		t.Fatal("no proxied daemon browser")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	allocCtx, cancelAlloc := remote.NewAllocator(ctx, d.WSURL)
+	defer cancelAlloc()
+	tmpCtx, cancelTmp := chromedp.NewContext(allocCtx)
+	res, err := chromedp.Call(tmpCtx, target.CreateTarget, target.CreateTargetParams{URL: "http://proxied.test/page"})
+	cancelTmp()
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	s := &browserSession{Name: "ps", Target: string(res.TargetID), Profile: "psess", Proxy: proxy}
+	if err := saveSession(s); err != nil {
+		t.Fatal(err)
+	}
+	o := staticOpts()
+	o.timeout = 0
+	eval, cT, cA, cP, err := sessionCtx(s, o)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	title, err := eval("document.title")
+	cT()
+	cA()
+	cP()
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if title != "Via Proxy" {
+		t.Errorf("title = %q, want Via Proxy", title)
+	}
+	if hits < 1 {
+		t.Error("proxy saw no requests: session went direct")
+	}
+	// Second attach = the next CLI command: same live tab.
+	eval2, cT2, cA2, cP2, err := sessionCtx(s, o)
+	if err != nil {
+		t.Fatalf("reattach: %v", err)
+	}
+	href, err := eval2("location.href")
+	cT2()
+	cA2()
+	cP2()
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if !strings.Contains(href, "proxied.test") {
+		t.Errorf("reattached to %q, want the session tab", href)
+	}
+}
+
 // TestE2EBatchEnvelopes checks the batch contract against one good and
 // one missing page: doc plus error, input order kept.
 func TestE2EBatchEnvelopes(t *testing.T) {

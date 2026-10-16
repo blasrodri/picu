@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -24,6 +26,32 @@ type browserSession struct {
 	Name    string `json:"name"`
 	Target  string `json:"target"`
 	Profile string `json:"profile"`
+	// Proxy pins the session to one proxy for its whole life: rotation
+	// would hop daemons and break reattach, so the open-time pick
+	// (explicit --proxy or one pool draw) sticks. Empty means direct.
+	Proxy string `json:"proxy"`
+}
+
+// sessionDaemon returns the daemon for a session: the profile daemon
+// when proxy is empty, otherwise a dedicated proxied daemon on a
+// sibling dir (seeded once from the profile's session files) so the
+// long-lived direct browser is never contaminated.
+func sessionDaemon(baseWd, proxy string) (daemonInfo, bool) {
+	if proxy == "" {
+		d, _, ok := daemonGet(baseWd)
+		return d, ok
+	}
+	h := sha1.Sum([]byte(proxy))
+	dir := baseWd + ".proxied-" + hex.EncodeToString(h[:4])
+	if _, err := os.Stat(filepath.Join(dir, "Default")); err != nil {
+		if _, cerr := copySessionTree(baseWd, dir); cerr != nil {
+			return daemonInfo{}, false
+		}
+	}
+	d, _, ok := daemonGetWith(dir, func(d string) (daemonInfo, bool) {
+		return daemonSpawnProxy(d, proxy)
+	})
+	return d, ok
 }
 
 func sessionPath(name string) (string, error) {
@@ -131,7 +159,9 @@ func sessionCtx(s *browserSession, o fetchOpts) (eval func(string) (string, erro
 	if st, serr := os.Stat(filepath.Join(wd, "Default")); serr != nil || !st.IsDir() {
 		return nil, nil, nil, nil, fmt.Errorf("no saved session files for profile %q — re-run picu login to materialize them", profile)
 	}
-	d, _, ok := daemonGet(wd)
+	// The session's pinned proxy (chosen at open) selects its daemon;
+	// per-command flags never re-route a live session.
+	d, ok := sessionDaemon(wd, s.Proxy)
 	if !ok {
 		return nil, nil, nil, nil, fmt.Errorf("could not start the session browser")
 	}
@@ -145,6 +175,11 @@ func sessionCtx(s *browserSession, o fetchOpts) (eval func(string) (string, erro
 	// later snap/act invocations can reattach to it.
 	taskCtx, cancelT := chromedp.NewContext(allocCtx, chromedp.WithTargetID(target.ID(s.Target)), chromedp.WithDetachOnCancel())
 	evalFn := func(expr string) (string, error) { return evalString(taskCtx, expr) }
+	if s.Proxy != "" {
+		// Answer proxy auth for this attach window; a later command's
+		// reattach revives it. No teardown needed: it ends with cancel.
+		serveProxyAuth(taskCtx, s.Proxy)
+	}
 	if _, err := evalFn("location.href"); err != nil {
 		cancelT()
 		cancelA()
@@ -212,7 +247,13 @@ func runOpen(args []string, o fetchOpts) {
 	if st, err := os.Stat(filepath.Join(wd, "Default")); err != nil || !st.IsDir() {
 		fatal(fmt.Sprintf("no saved session files for profile %q — re-run picu login to materialize them", o.profile))
 	}
-	d, _, ok := daemonGet(wd)
+	// The open-time proxy (explicit or one pool draw) pins the whole
+	// session: later commands reuse it from the record.
+	proxy := o.proxy
+	if proxy == "" {
+		proxy = nextPoolProxy()
+	}
+	d, ok := sessionDaemon(wd, proxy)
 	if !ok {
 		fatal("could not start the session browser")
 	}
@@ -226,7 +267,7 @@ func runOpen(args []string, o fetchOpts) {
 	if err != nil {
 		fatal(fmt.Sprintf("open: %v", err))
 	}
-	s := &browserSession{Name: name, Target: string(res.TargetID), Profile: o.profile}
+	s := &browserSession{Name: name, Target: string(res.TargetID), Profile: o.profile, Proxy: proxy}
 	if err := saveSession(s); err != nil {
 		fatal(err.Error())
 	}
@@ -255,7 +296,7 @@ func runCloseTarget(s *browserSession) {
 	if err != nil {
 		return
 	}
-	d, _, ok := daemonGet(wd)
+	d, ok := sessionDaemon(wd, s.Proxy)
 	if !ok {
 		return
 	}
@@ -414,7 +455,11 @@ func runSessions() {
 		return
 	}
 	for _, s := range all {
-		fmt.Printf("%s (profile %s)\n", s.Name, s.Profile)
+		via := ""
+		if s.Proxy != "" {
+			via = " via proxy"
+		}
+		fmt.Printf("%s (profile %s%s)\n", s.Name, s.Profile, via)
 	}
 }
 

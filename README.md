@@ -191,8 +191,16 @@ file or a provider download URL and rotates one proxy per fetch
 for a single fetch. proxy URLs carry credentials, so they never
 appear in output or logs — only the pool size on stderr. chrome
 renders get a cold proxied launch on a temp session copy (auth
-preserved through jar injection) — profile daemons, session tabs,
-and interactive login stay direct. cache keys include the proxy URL.
+preserved through jar injection) — profile daemons and interactive
+login stay direct. chrome never gets credentials in its flags
+(unsupported); proxy logins are answered over CDP instead.
+cache keys include the proxy URL.
+
+sessions pin one proxy for life: `open --proxy URL` (or one pool
+draw) records it, and every later `snap`/`act` reuses the same
+proxied daemon — rotation would hop browsers and break reattach, so
+it never applies mid-session. `sessions` marks them `via proxy`
+without ever printing the URL.
 
 ## agents
 

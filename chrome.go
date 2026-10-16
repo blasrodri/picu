@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
@@ -185,7 +186,9 @@ func chromeArgs(headless bool, userDataDir string, port int, proxy string) []str
 	if proxy != "" {
 		// Loopback always bypasses: CDP-adjacent local fetches and
 		// fixture servers must never route through the proxy.
-		args = append(args, "--proxy-server="+proxy, "--proxy-bypass-list=<-loopback>")
+		// Credentials are stripped (Chrome rejects inline userinfo);
+		// serveProxyAuth answers the challenge over Fetch.
+		args = append(args, "--proxy-server="+proxyServerFlag(proxy), "--proxy-bypass-list=<-loopback>")
 	}
 	return args
 }
@@ -367,7 +370,7 @@ func renderHeadless(url, profileName, userDir string, overall time.Duration, o f
 		if derr != nil {
 			return "", derr
 		}
-		fmt.Fprintf(os.Stderr, "chrome: cold proxied launch (%s)\n", o.proxy)
+		fmt.Fprintf(os.Stderr, "chrome: cold proxied launch (%s)\n", proxyServerFlag(o.proxy))
 		wsURL = w
 	}
 	if wsURL == "" && useDaemon && daemonEnabled() {
@@ -426,6 +429,12 @@ func renderHeadless(url, profileName, userDir string, overall time.Duration, o f
 	tracker := newFlightTracker()
 	if _, err := chromedp.Call(taskCtx, network.Enable, network.EnableParams{}); err == nil {
 		go feedFlights(taskCtx, tracker)
+	}
+	if o.proxy != "" {
+		// Authenticate the proxied launch before the first request:
+		// credentials never go in --proxy-server (Chrome rejects
+		// inline userinfo), they are answered over Fetch instead.
+		serveProxyAuth(taskCtx, o.proxy)
 	}
 
 	if err := injectJar(taskCtx, profileName, url); err != nil {
@@ -786,6 +795,72 @@ func (t *flightTracker) active() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.in)
+}
+
+// proxyServerFlag strips credentials for --proxy-server: Chrome rejects
+// inline userinfo with ERR_NO_SUPPORTED_PROXIES, so auth is answered
+// over Fetch (serveProxyAuth) instead of the flag.
+func proxyServerFlag(raw string) string {
+	u, err := parseProxyURL(raw)
+	if err != nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
+}
+
+// serveProxyAuth answers proxy auth challenges on ctx until it ends.
+// Enable it right after attach, before any navigation. Fetch events
+// stop with the context, so session attaches inherit it with no extra
+// teardown — and a later reattach revives it for the next window.
+//
+// Fetch.enable with no URL patterns pauses EVERY request until the
+// client continues it, so the loop pumps Fetch.requestPaused straight
+// through: without that pump the first navigation never leaves the
+// browser. Non-proxy auth challenges are cancelled outright (fail
+// fast — headless Chrome has no login dialog to show).
+func serveProxyAuth(ctx context.Context, proxyURL string) {
+	u, err := parseProxyURL(proxyURL)
+	if err != nil || u.User == nil {
+		return
+	}
+	user := u.User.Username()
+	pass, _ := u.User.Password()
+	if user == "" {
+		return
+	}
+	if _, err := chromedp.Call(ctx, fetch.Enable, fetch.EnableParams{HandleAuthRequests: boolPtr(true)}); err != nil {
+		return
+	}
+	go func() {
+		for ev, err := range chromedp.Events(ctx, fetch.RequestPaused) {
+			if err != nil {
+				return
+			}
+			_, _ = chromedp.Call(ctx, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: ev.RequestID})
+		}
+	}()
+	go func() {
+		for ev, err := range chromedp.Events(ctx, fetch.AuthRequired) {
+			if err != nil {
+				return
+			}
+			resp := &fetch.AuthChallengeResponse{
+				Response: fetch.AuthChallengeResponseResponseCancelAuth,
+			}
+			if ev.AuthChallenge != nil && ev.AuthChallenge.Source == fetch.AuthChallengeSourceProxy {
+				resp = &fetch.AuthChallengeResponse{
+					Response: fetch.AuthChallengeResponseResponseProvideCredentials,
+					Username: user,
+					Password: pass,
+				}
+			}
+			_, _ = chromedp.Call(ctx, fetch.ContinueWithAuth, fetch.ContinueWithAuthParams{
+				RequestID:             ev.RequestID,
+				AuthChallengeResponse: resp,
+			})
+		}
+	}()
 }
 
 // feedFlights streams CDP network events into the tracker until ctx ends.

@@ -82,6 +82,18 @@ func TestListSessions(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("listSessions = %+v", all)
 	}
+	if err := saveSession(&browserSession{Name: "p", Target: "t3", Profile: "p", Proxy: "http://x:1"}); err != nil {
+		t.Fatal(err)
+	}
+	all = listSessions()
+	if len(all) != 3 {
+		t.Fatalf("listSessions = %+v", all)
+	}
+	for _, s := range all {
+		if s.Name == "p" && s.Proxy != "http://x:1" {
+			t.Errorf("session proxy = %q, want pinned value", s.Proxy)
+		}
+	}
 }
 
 func TestSessionRoundTrip(t *testing.T) {

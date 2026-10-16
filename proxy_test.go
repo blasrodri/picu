@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,21 @@ import (
 	"strings"
 	"testing"
 )
+
+// checkProxyAuth validates the Proxy-Authorization header (Basic
+// scheme) against a want of user:pass.
+func checkProxyAuth(r *http.Request, want string) bool {
+	ah := r.Header.Get("Proxy-Authorization")
+	if !strings.HasPrefix(ah, "Basic ") {
+		return false
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(ah, "Basic "))
+	if err != nil {
+		return false
+	}
+	parts := strings.SplitN(string(b), ":", 2)
+	return len(parts) == 2 && parts[0]+":"+parts[1] == want
+}
 
 func TestParseProxyURL(t *testing.T) {
 	for _, good := range []string{"http://127.0.0.1:8080", "https://proxy.lan:3128", "http://user:pw@proxy:8080"} {
@@ -124,18 +140,40 @@ func TestCacheKeyVariesWithProxy(t *testing.T) {
 // forwardProxy is a test forward proxy: it answers with marker HTML for
 // the proxied.test host and 204s everything else (a real browser sends
 // background CONNECTs too), so tests prove the fetch rode the proxy.
+// With wantAuth set (user:pass), requests without matching
+// Proxy-Authorization get a 407.
 func forwardProxy(t *testing.T, hits *int) string {
+	return forwardProxyAuth(t, hits, "")
+}
+
+func forwardProxyAuth(t *testing.T, hits *int, wantAuth string) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Host, "proxied.test") {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		if wantAuth != "" {
+			if !checkProxyAuth(r, wantAuth) {
+				w.Header().Set("Proxy-Authenticate", `Basic realm="test"`)
+				w.WriteHeader(http.StatusProxyAuthRequired)
+				return
+			}
+		}
 		*hits++
 		fmt.Fprint(w, `<html><head><title>Via Proxy</title></head><body><p>proxied marker body.</p></body></html>`)
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+func TestProxyServerFlagStripsCreds(t *testing.T) {
+	if got := proxyServerFlag("http://user:pw@127.0.0.1:8080"); got != "http://127.0.0.1:8080" {
+		t.Errorf("proxyServerFlag = %q, want creds stripped", got)
+	}
+	if got := proxyServerFlag("http://127.0.0.1:8080"); got != "http://127.0.0.1:8080" {
+		t.Errorf("proxyServerFlag = %q", got)
+	}
 }
 
 func TestE2EStaticViaProxy(t *testing.T) {
@@ -170,5 +208,27 @@ func TestE2EChromeViaProxy(t *testing.T) {
 	}
 	if !strings.Contains(md, "proxied marker body") {
 		t.Errorf("chromium did not render through the proxy (via %s): %q", via, md)
+	}
+}
+
+// TestE2EChromeViaProxyAuth proves the Fetch-auth path: the proxy
+// demands Basic and the render still succeeds, which only works when
+// credentials are answered over CDP (Chrome rejects them in the flag).
+func TestE2EChromeViaProxyAuth(t *testing.T) {
+	needRenderer(t, "chrome")
+	var hits int
+	proxy := forwardProxyAuth(t, &hits, "tu:tl")
+	u := strings.Replace(proxy, "http://", "http://tu:tl@", 1)
+	o := chromeTestOpts(t)
+	o.proxy = u
+	md, _, _, via, err := get("http://proxied.test/page", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits < 1 {
+		t.Error("proxy saw no authenticated requests")
+	}
+	if !strings.Contains(md, "proxied marker body") {
+		t.Errorf("authed chromium render failed (via %s): %q", via, md)
 	}
 }

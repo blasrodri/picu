@@ -119,6 +119,13 @@ func killIfChrome(pid int) {
 // released, not waited on, so it outlives this picu run (dying with the
 // login session at the latest). Returns false on any failure.
 func daemonSpawn(userDir string) (daemonInfo, bool) {
+	return daemonSpawnProxy(userDir, "")
+}
+
+// daemonSpawnProxy launches a daemon browser, proxied when proxy is set
+// (with loopback bypass baked into the flags). Proxied daemons live on
+// sibling dirs so direct daemons stay uncontaminated.
+func daemonSpawnProxy(userDir, proxy string) (daemonInfo, bool) {
 	var zero daemonInfo
 	chrome, ok := findSystemChrome()
 	if !ok {
@@ -128,7 +135,7 @@ func daemonSpawn(userDir string) (daemonInfo, bool) {
 	if err != nil {
 		return zero, false
 	}
-	cmd := exec.Command(chrome, chromeArgs(true, userDir, port, "")...)
+	cmd := exec.Command(chrome, chromeArgs(true, userDir, port, proxy)...)
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		return zero, false
