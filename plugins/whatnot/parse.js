@@ -23,9 +23,12 @@
     'Bose', 'Dyson', 'Lenovo', 'HP', 'Dell', 'Asus', 'Acer', 'Philips',
     'Xiaomi', 'Nintendo', 'PlayStation', 'Xbox', 'Lego', 'Pokémon',
     'Bosch', 'Makita', 'DeWalt', 'Sealey', 'Einhell', 'Kärcher',
-    'Nike', 'Adidas', 'Puma', 'CÉLINE', 'Celine', 'Louis Vuitton',
-    'Gucci', 'Chanel', 'Rado', 'Seiko', 'Casio', 'Rolex', 'Omega',
-    'Tissot', 'Fossil', 'G-Shock'];
+    'Nike', 'Adidas', 'Puma', 'Jordan', 'CÉLINE', 'Celine', 'Louis Vuitton',
+    'Gucci', 'Chanel', 'Dior', 'Hermès', 'Cartier', 'Creed',
+    'Kérastase', 'Kerastase', 'LOréal', 'GHD',
+    'Rado', 'Seiko', 'Casio', 'Rolex', 'Omega', 'Tissot', 'Fossil', 'G-Shock',
+    'NVIDIA', 'RTX', 'GeForce', 'AMD', 'Ryzen', 'Intel', 'Corsair',
+    'G.Skill', 'Kingston', 'SSD', 'DDR4', 'DDR5', 'Canon', 'Nikon', 'GoPro'];
   const hay = [String(state.product || '')]
     .concat((state.chat || []))
     .concat((tr.segments || []).map(s => s.text || '')).join('\n');
