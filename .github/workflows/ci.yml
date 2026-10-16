@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+      - uses: browser-actions/setup-chrome@v1
       - name: format
         run: test -z "$(gofmt -l .)"
       - name: vet
