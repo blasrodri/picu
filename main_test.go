@@ -427,7 +427,6 @@ func TestBorrowForFetch(t *testing.T) {
 	for _, want := range []string{
 		"Default/Cookies",
 		"Default/Local Storage/leveldb/000001.ldb",
-		"Local State",
 	} {
 		if _, err := os.Stat(tmp + "/" + want); err != nil {
 			t.Errorf("borrow missing %s: %v", want, err)
@@ -435,6 +434,11 @@ func TestBorrowForFetch(t *testing.T) {
 	}
 	if _, err := os.Stat(tmp + "/Default/Login Data"); !os.IsNotExist(err) {
 		t.Error("password stores must never be borrowed")
+	}
+	// A live browser's Local State carries machine/profile state that
+	// makes a fresh Chrome discard the cookie store — never borrow it.
+	if _, err := os.Stat(tmp + "/Local State"); !os.IsNotExist(err) {
+		t.Error("Local State must never be borrowed")
 	}
 	if st, _ := os.Stat(tmp + "/Default/Cookies"); st.Mode().Perm() != 0o600 {
 		t.Errorf("borrowed Cookies perm = %o, want 600", st.Mode().Perm())
