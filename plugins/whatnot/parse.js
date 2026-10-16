@@ -17,6 +17,22 @@
   const stop = new Set(['the', 'avec', 'pas', 'und', 'der', 'die', 'das',
     'una', 'los', 'las', 'open-box', 'openbox', 'bids', 'qty',
     'shipping', 'taxes', 'extra', 'available']);
+  // Brand lexicon, matched case-insensitively across title, chat, and
+  // speech. Extend freely — this is the file's job, not core's.
+  const brands = ['MSI', 'Apple', 'iPhone', 'iPad', 'Samsung', 'Sony',
+    'Bose', 'Dyson', 'Lenovo', 'HP', 'Dell', 'Asus', 'Acer', 'Philips',
+    'Xiaomi', 'Nintendo', 'PlayStation', 'Xbox', 'Lego', 'Pokémon',
+    'Bosch', 'Makita', 'DeWalt', 'Sealey', 'Einhell', 'Kärcher',
+    'Nike', 'Adidas', 'Puma', 'CÉLINE', 'Celine', 'Louis Vuitton',
+    'Gucci', 'Chanel', 'Rado', 'Seiko', 'Casio', 'Rolex', 'Omega',
+    'Tissot', 'Fossil', 'G-Shock'];
+  const hay = [String(state.product || '')]
+    .concat((state.chat || []))
+    .concat((tr.segments || []).map(s => s.text || '')).join('\n');
+  const seenBrands = [];
+  for (const b of brands) {
+    if (hay.toLowerCase().includes(b.toLowerCase()) && !seenBrands.includes(b)) seenBrands.push(b);
+  }
   const words = String(state.product || '').toLowerCase().split(/\s+/)
     .map(w => w.replace(/^[.,!?:;()#]+|[.,!?:;()#]+$/g, ''))
     .filter(w => w.length >= 4 && !stop.has(w));
@@ -47,6 +63,6 @@
     verdict = `between lots: ${product}`;
   }
   return JSON.stringify({verdict, spokenPrices: spoken, hammerCues: cues,
-    pitchMatch: pitched, product: state.product, price: state.price,
-    status: state.status, winner: state.winner});
+    pitchMatch: pitched, brands: seenBrands, product: state.product,
+    price: state.price, status: state.status, winner: state.winner});
 })

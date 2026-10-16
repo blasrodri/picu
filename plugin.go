@@ -64,7 +64,14 @@ func runEval(js string, o fetchOpts) {
 	defer cancelTask()
 	raw, err := eval(js)
 	if err != nil {
-		fatal(err.Error())
+		// evalString only decodes string results; retry raw so numbers
+		// and booleans print instead of erroring.
+		raw2, err2 := eval("JSON.stringify((" + js + "))")
+		if err2 != nil {
+			fatal(err.Error())
+		}
+		fmt.Println(raw2)
+		return
 	}
 	fmt.Println(raw)
 }
