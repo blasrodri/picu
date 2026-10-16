@@ -127,6 +127,13 @@ func main() {
 		case "snap":
 			runSnap(currentOpts())
 			return
+		case "dom":
+			if flag.NArg() != 2 {
+				fmt.Fprintln(os.Stderr, "usage: picu dom --session S SELECTOR (outerHTML of matches, truncated)")
+				os.Exit(2)
+			}
+			runDom(flag.Arg(1), currentOpts())
+			return
 		case "act":
 			runAct(flag.Args()[1:], currentOpts())
 			return
@@ -147,6 +154,16 @@ func main() {
 				os.Exit(2)
 			}
 			runBid(currentOpts(), max)
+			return
+		case "see":
+			question := ""
+			if flag.NArg() == 2 {
+				question = flag.Arg(1)
+			} else if flag.NArg() > 2 {
+				fmt.Fprintln(os.Stderr, "usage: picu see --session S [--interval D] [\"question\"]")
+				os.Exit(2)
+			}
+			runSee(currentOpts(), *watchEvery, flagPassed("interval"), question)
 			return
 		case "crawl":
 			runCrawl(flag.Args()[1:], currentOpts())

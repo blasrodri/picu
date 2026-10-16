@@ -141,29 +141,29 @@ func formatSnapshot(url string, els []snapEl) string {
 // (task, allocator, parent — LIFO like renderHeadless). A single combined
 // closure overflows the stack under chromedp v0.21's remote allocator, so
 // do not recombine them.
-func sessionCtx(s *browserSession, o fetchOpts) (eval func(string) (string, error), cancelTask, cancelAlloc, cancelParent context.CancelFunc, err error) {
+func sessionCtx(s *browserSession, o fetchOpts) (taskCtx context.Context, eval func(string) (string, error), cancelTask, cancelAlloc, cancelParent context.CancelFunc, err error) {
 	if *useReal {
-		return nil, nil, nil, nil, fmt.Errorf("sessions need a snapshot profile, not --use-real-profile (borrowed copies cannot persist)")
+		return nil, nil, nil, nil, nil, fmt.Errorf("sessions need a snapshot profile, not --use-real-profile (borrowed copies cannot persist)")
 	}
 	profile := o.profile
 	if profile == "" {
 		profile = s.Profile
 	}
 	if profile == "" {
-		return nil, nil, nil, nil, fmt.Errorf("sessions need --profile NAME (the browser persists per profile)")
+		return nil, nil, nil, nil, nil, fmt.Errorf("sessions need --profile NAME (the browser persists per profile)")
 	}
 	wd, werr := webdataDir(profile)
 	if werr != nil {
-		return nil, nil, nil, nil, werr
+		return nil, nil, nil, nil, nil, werr
 	}
 	if st, serr := os.Stat(filepath.Join(wd, "Default")); serr != nil || !st.IsDir() {
-		return nil, nil, nil, nil, fmt.Errorf("no saved session files for profile %q — re-run picu login to materialize them", profile)
+		return nil, nil, nil, nil, nil, fmt.Errorf("no saved session files for profile %q — re-run picu login to materialize them", profile)
 	}
 	// The session's pinned proxy (chosen at open) selects its daemon;
 	// per-command flags never re-route a live session.
 	d, ok := sessionDaemon(wd, s.Proxy)
 	if !ok {
-		return nil, nil, nil, nil, fmt.Errorf("could not start the session browser")
+		return nil, nil, nil, nil, nil, fmt.Errorf("could not start the session browser")
 	}
 	overall := o.timeout
 	if overall < 150*time.Second {
@@ -184,9 +184,9 @@ func sessionCtx(s *browserSession, o fetchOpts) (eval func(string) (string, erro
 		cancelT()
 		cancelA()
 		cancel()
-		return nil, nil, nil, nil, fmt.Errorf("session %q expired — run: picu open --profile %s URL", s.Name, profile)
+		return nil, nil, nil, nil, nil, fmt.Errorf("session %q expired — run: picu open --profile %s URL", s.Name, profile)
 	}
-	return evalFn, cancelT, cancelA, cancel, nil
+	return taskCtx, evalFn, cancelT, cancelA, cancel, nil
 }
 
 func sessionURL(eval func(string) (string, error)) string {
@@ -194,6 +194,29 @@ func sessionURL(eval func(string) (string, error)) string {
 		return u
 	}
 	return "unknown"
+}
+
+// runDom prints outerHTML (truncated) for every match of a selector —
+// the mapping tool for pages snapshot refs can't describe (chat logs,
+// canvases, shadow-adjacent structures).
+func runDom(sel string, o fetchOpts) {
+	name := *sessionFlg
+	s, err := loadSession(name)
+	if err != nil {
+		fatal(err.Error())
+	}
+	_, eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
+	if err != nil {
+		fatal(err.Error())
+	}
+	defer cancelParent()
+	defer cancelAlloc()
+	defer cancelTask()
+	raw, err := eval(`(sel => { const out = []; const els = document.querySelectorAll(sel); for (let i = 0; i < Math.min(els.length, 3); i++) { const h = els[i].outerHTML || ''; out.push(h.slice(0, 2000)); } return JSON.stringify({matches: els.length, html: out}); })` + "(" + strconv.Quote(sel) + ")")
+	if err != nil {
+		fatal(err.Error())
+	}
+	fmt.Println(raw)
 }
 
 // resolveRef maps a numeric step argument to the element's selector.
@@ -274,7 +297,7 @@ func runOpen(args []string, o fetchOpts) {
 	if err := saveSession(s); err != nil {
 		fatal(err.Error())
 	}
-	eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
+	_, eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -322,7 +345,7 @@ func runSnap(o fetchOpts) {
 	if err != nil {
 		fatal(err.Error())
 	}
-	eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
+	_, eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -347,7 +370,7 @@ func runAct(args []string, o fetchOpts) {
 	if err != nil {
 		fatal(err.Error())
 	}
-	eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
+	_, eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
 	if err != nil {
 		fatal(err.Error())
 	}

@@ -35,28 +35,56 @@ for (const b of document.querySelectorAll('button')) {
 let winner = '';
 const sold = foot.match(/[Ss]old\s+(?:to\s+)?(\S.{0,40}?)(?:\s{2,}|$)/);
 if (sold) winner = sold[1].trim();
+const cleanChat = t => {
+  const lines = (t || '').split('\n').map(s => s.trim())
+    .filter(s => s && s.length > 1 && !/^(Follow|Say something\.\.\.)$/i.test(s));
+  const out = [];
+  for (const l of lines) {
+    if (out.length === 0 || out[out.length - 1] !== l) out.push(l);
+  }
+  return out.slice(-8);
+};
+const vis = el => { try { return el.getClientRects().length > 0; } catch (e) { return false; } };
+// Chat rows carry data-testid="chat-message" (avatar, username, text
+// in innerText). Hidden mobile duplicates are skipped by visibility.
+let chat = [];
+{
+  const rows = document.querySelectorAll('[data-testid="chat-message"]');
+  const seen = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (!vis(rows[i])) continue;
+    const t = (rows[i].innerText || '').trim().replace(/\s+/g, ' ');
+    if (t) seen.push(t.slice(0, 220));
+  }
+  chat = cleanChat(seen.slice(-6).join('\n'));
+}
+if (!winner) {
+  for (let i = chat.length - 1; i >= 0; i--) {
+    const m = chat[i].match(/^(.{2,30}?)\s+won\b/i) || chat[i].match(/congrats\s+(\S.{0,30}?)\s*(!|$)/i);
+    if (m) { winner = m[1].trim(); break; }
+  }
+}
 let status = 'off';
 if (/auction hasn't started/i.test(foot)) status = 'pre';
 else if (canBid) status = 'live';
 else if (winner) status = 'sold';
-const chat = [];
-const nodes = document.querySelectorAll('div');
 return JSON.stringify({seller, viewers, product: foot.slice(0, 300),
-  price: bidPrice, canBid, status, winner, chat, n: nodes.length});
+  price: bidPrice, canBid, status, winner, chat});
 })()`
 
 type watchState struct {
-	Seller  string `json:"seller"`
-	Viewers string `json:"viewers"`
-	Product string `json:"product"`
-	Price   string `json:"price"`
-	CanBid  bool   `json:"canBid"`
-	Status  string `json:"status"`
-	Winner  string `json:"winner"`
+	Seller  string   `json:"seller"`
+	Viewers string   `json:"viewers"`
+	Product string   `json:"product"`
+	Price   string   `json:"price"`
+	CanBid  bool     `json:"canBid"`
+	Status  string   `json:"status"`
+	Winner  string   `json:"winner"`
+	Chat    []string `json:"chat"`
 }
 
 func (w watchState) key() string {
-	return strings.Join([]string{w.Seller, w.Viewers, w.Product, w.Price, w.Status, w.Winner}, "|")
+	return strings.Join(append([]string{w.Seller, w.Viewers, w.Product, w.Price, w.Status, w.Winner}, w.Chat...), "|")
 }
 
 // runWatch implements `picu watch [--session S] [--interval D]`: attach
@@ -67,7 +95,7 @@ func runWatch(o fetchOpts, interval time.Duration) {
 	if err != nil {
 		fatal(err.Error())
 	}
-	eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
+	_, eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -95,10 +123,14 @@ func runWatch(o fetchOpts, interval time.Duration) {
 		if first || st.key() != last {
 			last = st.key()
 			first = false
+			if st.Chat == nil {
+				st.Chat = []string{}
+			}
 			doc := map[string]any{
 				"ts": time.Now().UTC().Format(time.RFC3339), "url": sessionURL(eval),
 				"seller": st.Seller, "viewers": st.Viewers, "product": st.Product,
 				"price": st.Price, "canBid": st.CanBid, "status": st.Status, "winner": st.Winner,
+				"chat": st.Chat,
 			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetEscapeHTML(false)
@@ -130,7 +162,7 @@ func runBid(o fetchOpts, max float64) {
 	if err != nil {
 		fatal(err.Error())
 	}
-	eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
+	_, eval, cancelTask, cancelAlloc, cancelParent, err := sessionCtx(s, o)
 	if err != nil {
 		fatal(err.Error())
 	}

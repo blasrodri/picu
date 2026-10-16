@@ -548,7 +548,7 @@ func TestE2EProxiedSession(t *testing.T) {
 	}
 	o := staticOpts()
 	o.timeout = 0
-	eval, cT, cA, cP, err := sessionCtx(s, o)
+	_, eval, cT, cA, cP, err := sessionCtx(s, o)
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -566,7 +566,7 @@ func TestE2EProxiedSession(t *testing.T) {
 		t.Error("proxy saw no requests: session went direct")
 	}
 	// Second attach = the next CLI command: same live tab.
-	eval2, cT2, cA2, cP2, err := sessionCtx(s, o)
+	_, eval2, cT2, cA2, cP2, err := sessionCtx(s, o)
 	if err != nil {
 		t.Fatalf("reattach: %v", err)
 	}

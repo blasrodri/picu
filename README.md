@@ -127,6 +127,8 @@ picu snap --session default --json            # {"url":…, "elements":[{ref,rol
 picu act --session default click 1 --json     # {"url":…, "results":[…], "elements":[…]}
 picu watch --session default --interval 10s   # live-show feed: one JSON line per state change
 picu bid --session default 150                # one explicit bid at or under 150, never auto-confirms
+picu see --session default                    # key frame + chat state to local vision model, text answer back
+picu dom --session default SELECTOR           # outerHTML of matches, for mapping pages snapshots can't describe
 picu sessions                                 # named sessions on disk
 picu close --session default                  # close tab, drop session
 ```
@@ -143,9 +145,13 @@ past that, or after a rebuild or reboot, a dead tab reports
 `session expired`, and the loop re-opens (login persists in the
 profile, so re-opening is a new tab, not a re-login).
 `watch` polls read-only on a slow ticker for live-shopping tabs
-(stream, product, price, winner — Whatnot-shaped today); `bid` clicks
-the live bid button only at or under your max and leaves any
-confirmation dialog to you — picu never confirms purchases.
+(stream, product, price, winner, plus the last chat lines —
+Whatnot-shaped today); `bid` clicks the live bid button only at or
+under your max and leaves any confirmation dialog to you — picu never
+confirms purchases. `see` captures one key frame per tick and asks the
+local vision model (`PICU_VISION_MODEL`, default gemma3:4b via
+`PICU_OLLAMA_URL`) what is being auctioned; the frame never leaves the
+machine. model, browser, and stream all run locally.
 
 ## daemon (opt-in speed)
 
